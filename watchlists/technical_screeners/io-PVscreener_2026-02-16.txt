@@ -1,0 +1,34 @@
+# TradingView Watchlist: io-PVscreener
+# Generated: 2026-02-16 14:36:16
+# Filter: PV Days Ago < 20 AND Gap Days Ago < 20
+# Stocks: 28
+# Sort: PV Days Ago (asc), Gap1 Size % (desc)
+#
+CROX
+IBM
+SHD
+AEHR
+VRT
+HUBS
+SSU
+GNRC
+EWCZ
+MAR
+RDDT
+KOG
+GSK
+COIN
+AMSC
+PLTR
+SPOT
+AES
+DECK
+VZ
+META
+RCL
+SCCO
+FCX
+BHP
+YSN
+5380
+TECK
