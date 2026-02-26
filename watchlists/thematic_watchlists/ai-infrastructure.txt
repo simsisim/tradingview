@@ -1,0 +1,55 @@
+ticker
+NVDA, value
+STRL, engineering
+WLDN,utility, consulting
+MTZ, construction, utility, communication
+ACA, wind towers
+STN,
+PRIM,
+powel
+modine
+eqix
+dlr
+irm
+fix
+EQIX
+DLR
+
+IRM
+CONE
+SWCH
+DLR
+QTS
+VRT
+MOD
+FIX
+STRL
+
+##liquid_coolers
+Emvoccol
+vertiv
+delta electronics
+trane technologies
+schneider 
+gates
+##old_infrastructure
+Preformed Line (PLPC)
+Power Solutions (PSIX)
+Ameresco (AMRC)
+MYR (MYRG)
+Powell (POWL)
+EnerSys (ENS)
+Arcosa (ACA)
+Itron (ITRI)
+Primoris (PRIM)
+Valmont (VMI)
+
+
+
+
+#gold_miners
+https://www.youtube.com/watch?v=kXRGua4phsw
+
+
+
+
