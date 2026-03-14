@@ -1,65 +1,74 @@
 #!/usr/bin/env python3
 """
-Generate TradingView Pine Script dashboard from watchlist CSV
+Generate TradingView Pine Script dashboard from buyList CSV
 
 USAGE:
     python3 gen_dashboard.py [input_csv] [output_pine]
 
 EXAMPLES:
-    # Use default files (watchlist.csv -> dashboard.pine)
+    # Use default files (buyList.csv -> dashboard.pine)
     python3 gen_dashboard.py
 
     # Specify custom input CSV
-    python3 gen_dashboard.py my_watchlist.csv
+    python3 gen_dashboard.py myList.csv
 
     # Specify both input and output files
-    python3 gen_dashboard.py watchlist.csv custom_dashboard.pine
+    python3 gen_dashboard.py buyList.csv custom_dashboard.pine
 
 CSV FORMAT:
     The CSV file must have these columns:
-    - Ticker: Stock symbol (e.g., AAPL, TSLA, GETTEX:RHM)
-    - Trigger: Entry/trigger price
-    - Stop: Stop loss price
-    - Notes: Industry or notes about the stock
+    - ticker:    Stock symbol (e.g., AAPL, TSLA, GETTEX:RHM)
+    - BuyPrice:  Buy zone / price range (e.g., 240-220)  [optional]
+    - Trigger:   Entry/trigger price                      [optional]
+    - Stop:      Stop loss price                          [optional]
+    - Notes:     Industry or notes about the stock        [optional]
 
 FEATURES GENERATED:
     - 20 symbol slots (auto-populated from CSV)
-    - Separate Pre-MP and Post-MP columns
+    - BuyPrice column (populated from CSV)
     - EMA 10, EMA 20, SMA 50 metrics
-    - Separated metrics and distance columns
     - SlingShot signals
     - Price/Volume Breakout detection
     - Candle pattern recognition (Kicker, Oops, OEL/OEH, Inside/Engulf, 3Bar)
-    - Risk:Reward calculations
-    - Previous Day High/Low levels
+    - Risk:Reward calculations (Trading section, off by default)
+    - Previous Day High/Low levels (off by default)
+    - Pre/Post market change (off by default)
+
+REQUEST OPTIMIZATION:
+    Each symbol uses exactly 2 request.security() calls:
+    - _fetch_tf: 12 values (close/open/high/low/volume/EMAs) on user tf
+    - _fetch_D:  13 values (PDH/PDL/premarket/candlecombos) on Daily tf
+    Total for 20 symbols = 40 unique calls (at the free plan limit)
 """
 
 import pandas as pd
 import os
 from typing import List
 
-def read_watchlist_csv(csv_file_path: str = 'watchlist.csv') -> pd.DataFrame:
-    """Read and clean the watchlist CSV data."""
-    try:
-        # Read CSV
-        df = pd.read_csv(csv_file_path)
 
-        # Clean column names (remove extra spaces)
+def read_csv(csv_file_path: str) -> pd.DataFrame:
+    """Read and clean the input CSV data. Accepts ticker+BuyPrice or full watchlist format."""
+    try:
+        df = pd.read_csv(csv_file_path)
         df.columns = df.columns.str.strip()
 
-        # Ensure required columns exist
-        required_columns = ['Ticker', 'Trigger', 'Stop', 'Notes']
-        for col in required_columns:
+        # Normalize column names (case-insensitive match for 'ticker')
+        col_map = {c: c for c in df.columns}
+        for c in df.columns:
+            if c.lower() == 'ticker':
+                col_map[c] = 'Ticker'
+        df = df.rename(columns=col_map)
+
+        # Ensure all expected columns exist (fill missing ones with empty string)
+        for col in ['Ticker', 'Trigger', 'Stop', 'Notes', 'BuyPrice']:
             if col not in df.columns:
-                print(f"Warning: Column '{col}' not found in CSV")
+                df[col] = ''
 
-        # Fill NaN values appropriately
-        df['Ticker'] = df['Ticker'].fillna('')
-        df['Trigger'] = df['Trigger'].fillna('')
-        df['Stop'] = df['Stop'].fillna('')
-        df['Notes'] = df['Notes'].fillna('')
+        # Fill NaN values
+        for col in ['Ticker', 'Trigger', 'Stop', 'Notes', 'BuyPrice']:
+            df[col] = df[col].fillna('')
 
-        # Remove empty rows (rows with no ticker)
+        # Remove empty rows
         df = df[df['Ticker'].str.strip() != '']
 
         return df
@@ -76,22 +85,20 @@ def generate_symbol_inputs(df: pd.DataFrame, max_symbols: int = 20) -> str:
     for i in range(1, max_symbols + 1):
         if i <= len(df):
             row = df.iloc[i-1]
-            ticker = str(row['Ticker']).strip() if pd.notna(row['Ticker']) else ''
-            name = ticker  # Use ticker as name
-            trigger = str(row['Trigger']).strip() if pd.notna(row['Trigger']) and str(row['Trigger']).strip() != '' else ''
-            stop = str(row['Stop']).strip() if pd.notna(row['Stop']) and str(row['Stop']).strip() != '' else ''
-            notes = str(row['Notes']).strip() if pd.notna(row['Notes']) else ''
+            ticker   = str(row['Ticker']).strip()
+            trigger  = str(row['Trigger']).strip() if str(row['Trigger']).strip() != '' else ''
+            stop     = str(row['Stop']).strip()    if str(row['Stop']).strip()    != '' else ''
+            notes    = str(row['Notes']).strip()
+            buyprice = str(row['BuyPrice']).strip()
 
-            # Escape single quotes in notes for PineScript
-            notes = notes.replace("'", "\\'")
+            # Escape single quotes for PineScript strings
+            notes    = notes.replace("'", "\\'")
+            buyprice = buyprice.replace("'", "\\'")
 
             show = 'true' if ticker != '' else 'false'
+            name = ticker
         else:
-            ticker = ''
-            name = ''
-            trigger = ''
-            stop = ''
-            notes = ''
+            ticker = name = trigger = stop = notes = buyprice = ''
             show = 'false'
 
         symbol_input = f"""show_{i} = input.bool({show}, '', group='Symbols', inline='Line {i}', display = display.none)
@@ -100,6 +107,7 @@ name_{i} = input.string('{name}', '', group='Symbols', inline='Line {i}', displa
 trigger_{i} = input.string('{trigger}', 'Trigger', group='Symbols', inline='Line {i}', display = display.none)
 stop_{i} = input.string('{stop}', 'Stop', group='Symbols', inline='Line {i}', display = display.none)
 notes_{i} = input.string('{notes}', 'Notes', group='Symbols', inline='Line {i}', display = display.none)
+buyprice_{i} = input.string('{buyprice}', 'BuyPrice', group='Symbols', inline='Line {i}', display = display.none)
 bg_{i} = input.color(color.new(#909090, 70), '', group='Symbols', inline='Line {i}', display = display.none)
 txt_{i} = input.color(#d6d6d6, '', group='Symbols', inline='Line {i}', display = display.none)"""
 
@@ -109,17 +117,28 @@ txt_{i} = input.color(#d6d6d6, '', group='Symbols', inline='Line {i}', display =
 
 
 def generate_table_rows(max_symbols: int = 20) -> str:
-    """Generate the table row filling code."""
+    """Generate the table row filling code.
+    Each symbol uses exactly 2 request.security() calls:
+      _fetch_tf -> 12 values on user timeframe
+      _fetch_D  -> 13 values on Daily timeframe
+    All derived metrics are computed locally.
+    """
     table_rows = []
 
     for i in range(1, max_symbols + 1):
-        table_row = f"""[s{i}_sling, s{i}_slingprice] = _sling(ticker_{i}, sling_ema_len)
-[s{i}_pv_signal, s{i}_pv_price] = _pv_breakout(ticker_{i}, pv_price_period, pv_volume_period, pv_trendline_length)
-[s{i}_kicker, s{i}_oel, s{i}_oeh, s{i}_oopsUp, s{i}_oopsDn, s{i}_inside, s{i}_engulf, s{i}_b3Up, s{i}_b3Dn] = combo_data(ticker_{i})
-s{i}_pdh = _pdh(ticker_{i})
-s{i}_pdl = _pdl(ticker_{i})
-row := _t(show_{i}, ticker_{i}, name_{i}, txt_{i}, bg_{i}, _val(ticker_{i}, name_{i}), trigger_{i}, stop_{i}, notes_{i}, row, s{i}_sling, s{i}_slingprice, s{i}_pv_signal, s{i}_pv_price, s{i}_kicker, s{i}_oopsUp, s{i}_oopsDn, s{i}_oel, s{i}_oeh, s{i}_inside, s{i}_engulf, s{i}_b3Up, s{i}_b3Dn, s{i}_pdh, s{i}_pdl, {i-1})"""
-
+        table_row = (
+            f"[s{i}_c, s{i}_c1, s{i}_c2, s{i}_c3, s{i}_o, s{i}_h, s{i}_l, s{i}_v, s{i}_ema0, s{i}_ema1, s{i}_ema2, s{i}_ema3] = _fetch_tf(ticker_{i}, sling_ema_len)\n"
+            f"[s{i}_pdh, s{i}_pdl, s{i}_dc1, s{i}_do, s{i}_kicker, s{i}_oel, s{i}_oeh, s{i}_oopsUp, s{i}_oopsDn, s{i}_inside, s{i}_engulf, s{i}_b3Up, s{i}_b3Dn] = _fetch_D(ticker_{i})\n"
+            f"s{i}_chg = ticker_{i} == '' or name_{i} == '-' ? na : (na(s{i}_c) or na(s{i}_c1) ? na : (math.abs((s{i}_c - s{i}_c1) / s{i}_c1 * 100) > 1e6 ? na : (s{i}_c - s{i}_c1) / s{i}_c1 * 100))\n"
+            f"s{i}_premp = na(s{i}_dc1) or na(s{i}_do) ? na : (s{i}_do - s{i}_dc1) / s{i}_dc1 * 100\n"
+            f"s{i}_sling = s{i}_c > s{i}_ema0 and s{i}_c1 < s{i}_ema1 and s{i}_c2 < s{i}_ema2 and s{i}_c3 < s{i}_ema3\n"
+            f"s{i}_slingprice = s{i}_sling ? s{i}_c : na\n"
+            f"[s{i}_pv_signal, s{i}_pv_price] = _pv_compute(s{i}_c, s{i}_h, s{i}_l, s{i}_v, pv_price_period, pv_volume_period, pv_trendline_length)\n"
+            f"row := _t(show_{i}, ticker_{i}, name_{i}, txt_{i}, bg_{i}, s{i}_chg, trigger_{i}, stop_{i}, notes_{i}, buyprice_{i}, row, "
+            f"s{i}_c, s{i}_o, s{i}_premp, s{i}_sling, s{i}_slingprice, s{i}_pv_signal, s{i}_pv_price, "
+            f"s{i}_kicker, s{i}_oopsUp, s{i}_oopsDn, s{i}_oel, s{i}_oeh, s{i}_inside, s{i}_engulf, s{i}_b3Up, s{i}_b3Dn, "
+            f"s{i}_pdh, s{i}_pdl, {i-1})"
+        )
         table_rows.append(table_row)
 
     return '\n\n'.join(table_rows)
@@ -148,29 +167,27 @@ val_ema3 = input.string('SMA 50', 'Metric3', options=['EMA 10', 'EMA 20', 'SMA 5
 
 sling_ema_len = input.int(4, "Slingshot EMA Length", minval=1, group="Slingshot")
 
-// Price and Volume Breakout - Updated to match TradeDots original logic
+// Price and Volume Breakout
 pv_price_period = input.int(60, "Price Breakout Period", minval=1, group="Price & Volume Breakout")
 pv_volume_period = input.int(60, "Volume Breakout Period", minval=1, group="Price & Volume Breakout")
 pv_trendline_length = input.int(200, "Trendline Length", minval=1, group="Price & Volume Breakout")
-
-// Z-Score and RAROC parameters removed - only Chg % performance used
 
 // ---- Column Visibility Controls ----
 var gColVis = 'Column Visibility'
 show_basic = input.bool(true, 'Basic Info (Name, Price, Chg Open %, Performance)', group=gColVis)
 show_premp = input.bool(false, 'Pre-MP', group=gColVis)
 show_postmp = input.bool(false, 'Post-MP', group=gColVis)
-show_price_levels = input.bool(true, 'Price Levels (PDL, PDH after Name)', group=gColVis)
+show_price_levels = input.bool(false, 'Price Levels (PDL, PDH)', group=gColVis)
+show_buyprice = input.bool(true, 'Buy Price', group=gColVis)
 show_metrics = input.bool(true, 'Metrics (EMA/SMA)', group=gColVis)
 show_distances = input.bool(true, 'Distances to Metrics', group=gColVis)
-show_trading = input.bool(true, 'Trading (Trigger, Stop, R:R)', group=gColVis)
+show_trading = input.bool(false, 'Trading (Trigger, Stop, R:R)', group=gColVis)
 show_slingshot = input.bool(true, 'SlingShot Signals', group=gColVis)
 show_pv_breakout = input.bool(true, 'Price/Volume Breakout', group=gColVis)
 show_combos = input.bool(true, 'Candle Combos', group=gColVis)
 show_notes = input.bool(true, 'Industry', group=gColVis)
 
 // ---- Performance Table Controls ----
-// MODE selector: user chooses Label or Tooltip for symbol column
 _name(_str) =>
     string[] parts = str.split(_str, ":")
     array.size(parts) > 1 ? array.get(parts, 1) : _str
@@ -226,130 +243,81 @@ w_b = input.int(1, '', 0, group='Table', inline='Border')
 def get_template_middle() -> str:
     """Return the middle part of the template (between symbols and table rows)."""
     return """
-// ---- PERFORMANCE METRIC FUNCTIONS ----
+// ---- DATA FETCH FUNCTIONS (2 request.security calls per symbol) ----
+// Each symbol = 1 tf call + 1 Daily call = 2 unique requests
+// 20 symbols x 2 = 40 unique calls (free plan limit)
+
 custom_tf = timeframe.in_seconds(force_iday and timeframe.isintraday ? force_tf : tf)
 chart_tf = timeframe.in_seconds(timeframe.period)
 if chart_tf > custom_tf
     runtime.error('The selected timeframe is lower than the current chart timeframe.')
 
-_chg(ticker) =>
-    [c, c1] = request.security(ticker, force_iday and timeframe.isintraday ? force_tf : tf, [close, close[1]])
-    if na(c) or na(c1)
-        na
-    else
-        chg = (c - c1) / c1 * 100
-        chg := math.abs(chg) > 1e6 ? na : chg
-        chg
-
-_val(ticker, name) =>
-    ticker == '' or name == '-' ? na : _chg(ticker)
-
-// New: Previous Day High/Low and Market Sessions
-_pdh(ticker) => request.security(ticker, "D", high[1])
-_pdl(ticker) => request.security(ticker, "D", low[1])
-_premarket_chg(ticker) =>
-    d_close_prev = request.security(ticker, "D", close[1])
-    d_open = request.security(ticker, "D", open)
-    na(d_close_prev) or na(d_open) ? na : (d_open - d_close_prev) / d_close_prev * 100
-_postmarket_chg(ticker) =>
-    // Simplified post-market: always return 0.0 since market isn't closed during trading hours
-    0.0
-// Price/metrics helpers
-_price(ticker) => request.security(ticker, force_iday and timeframe.isintraday ? force_tf : tf, close)
-_open(ticker)  => request.security(ticker, force_iday and timeframe.isintraday ? force_tf : tf, open)
-_metric_val(ticker, metric) =>
+// Fetch all tf-based data in ONE request per symbol (12 values)
+_fetch_tf(ticker, emaLen) =>
     tf_used = force_iday and timeframe.isintraday ? force_tf : tf
-    price_series = request.security(ticker, tf_used, close)
-    if metric == 'EMA 10'
-        ta.ema(price_series, 10)
-    else if metric == 'EMA 20'
-        ta.ema(price_series, 20)
-    else if metric == 'SMA 50'
-        ta.sma(price_series, 50)
-    else
-        na
+    request.security(ticker, tf_used, [
+        close, close[1], close[2], close[3], open, high, low, volume,
+        ta.ema(high, emaLen), ta.ema(high, emaLen)[1], ta.ema(high, emaLen)[2], ta.ema(high, emaLen)[3]])
+
+// Fetch all daily data in ONE request per symbol (13 values)
+_fetch_D(ticker) =>
+    request.security(ticker, "D", [
+        high[1], low[1], close[1], open,
+        close[1] < open[1] and open > open[1],
+        open == low,
+        open == high,
+        open < low[1] and close > low[1],
+        open > high[1] and close <= high[1],
+        high <= high[1] and low >= low[1],
+        high > high[1] and low < low[1],
+        high[1] < high[3] and close > high[1] and close > high[2] and close > high[3],
+        low[1] > low[3] and close < low[1] and close < low[2] and close < low[3]])
+
+// Price/Volume Breakout - pure computation, no request.security
+_pv_compute(c, h, l, v, price_period, volume_period, trendline_length) =>
+    price_highest = ta.highest(h, price_period)
+    price_lowest = ta.lowest(l, price_period)
+    volume_highest = ta.highest(v, volume_period)
+    trendline = ta.sma(c, trendline_length)
+    long_breakout = c > price_highest[1] and v > volume_highest[1] and c > trendline
+    short_breakout = c < price_lowest[1] and v > volume_highest[1] and c < trendline
+    signal = long_breakout ? "Long" : short_breakout ? "Short" : ""
+    breakout_price = (long_breakout or short_breakout) ? c : na
+    [signal, breakout_price]
+
 _dist(price, metric_value) =>
     na(price) or na(metric_value) or metric_value == 0 ? na : (price - metric_value) / metric_value * 100
 
-// Helper functions to determine colors based on value comparison with price
 _get_value_text_color(value_str, price) =>
-    color.white  // Always white text for better contrast
+    color.white
 
 _get_value_bg_color(value_str, price) =>
     if value_str == '' or na(price)
-        color.new(#2D3748, 0)  // Neutral dark gray
+        color.new(#2D3748, 0)
     else
         value_num = str.tonumber(value_str)
         if na(value_num)
-            color.new(#2D3748, 0)  // Neutral dark gray
+            color.new(#2D3748, 0)
         else if value_num < 0 or price < value_num
-            color.new(#7D1007, 0)  // Dark red background (bearish)
+            color.new(#7D1007, 0)
         else
-            color.new(#1B4332, 0)  // Dark green background (bullish)
-
-// Slingshot
-_sling(ticker, emaLen) =>
-    [h, c, c1, c2, c3] = request.security(ticker, force_iday and timeframe.isintraday ? force_tf : tf, [high, close, close[1], close[2], close[3]])
-    ema  = request.security(ticker, force_iday and timeframe.isintraday ? force_tf : tf, ta.ema(high, emaLen))
-    ema1 = request.security(ticker, force_iday and timeframe.isintraday ? force_tf : tf, ta.ema(high, emaLen)[1])
-    ema2 = request.security(ticker, force_iday and timeframe.isintraday ? force_tf : tf, ta.ema(high, emaLen)[2])
-    ema3 = request.security(ticker, force_iday and timeframe.isintraday ? force_tf : tf, ta.ema(high, emaLen)[3])
-    sling = c > ema and c1 < ema1 and c2 < ema2 and c3 < ema3
-    [sling, sling ? c : na]
-
-_pv_breakout(ticker, price_period, volume_period, trendline_length) =>
-    tf_used = force_iday and timeframe.isintraday ? force_tf : tf
-    [close_series, high_series, low_series, volume_series] = request.security(ticker, tf_used, [close, high, low, volume])
-
-    // Calculate breakout levels (matching original TradeDots logic)
-    price_highest = ta.highest(high_series, price_period)  // Highest high over period
-    price_lowest = ta.lowest(low_series, price_period)     // Lowest low over period
-    volume_highest = ta.highest(volume_series, volume_period)  // Highest volume over period
-
-    // Calculate trendline (SMA of close)
-    trendline = ta.sma(close_series, trendline_length)
-
-    // Long breakout conditions (original TradeDots logic)
-    long_price_breakout = close_series > price_highest[1]  // Close above previous highest high
-    long_volume_breakout = volume_series > volume_highest[1]  // Volume above previous highest volume
-    long_trend_filter = close_series > trendline  // Close above trendline
-
-    // Short breakout conditions (original TradeDots logic)
-    short_price_breakout = close_series < price_lowest[1]  // Close below previous lowest low
-    short_volume_breakout = volume_series > volume_highest[1]  // Volume above previous highest volume
-    short_trend_filter = close_series < trendline  // Close below trendline
-
-    // Combined signals
-    long_breakout = long_price_breakout and long_volume_breakout and long_trend_filter
-    short_breakout = short_price_breakout and short_volume_breakout and short_trend_filter
-
-    // Return signal type and breakout price
-    signal = long_breakout ? "Long" : short_breakout ? "Short" : ""
-    breakout_price = (long_breakout or short_breakout) ? close_series : na
-
-    [signal, breakout_price]
-
-// ---- CANDLESTICK COMBOS: CCS INTEGRATION ----
-combo_data(ticker) =>
-    [kicker, oel, oeh, oopsUp, oopsDn, inside, engulf, b3Up] = request.security(ticker, "D", [close[1] < open[1] and open > open[1], open == low, open == high, open < low[1] and close > low[1], open > high[1] and close <= high[1], high <= high[1] and low >= low[1], high > high[1] and low < low[1], high[1] < high[3] and close > high[1] and close > high[2] and close > high[3]])
-    b3Dn = request.security(ticker, "D", low[1] > low[3] and close < low[1] and close < low[2] and close < low[3])
-    [kicker, oel, oeh, oopsUp, oopsDn, inside, engulf, b3Up, b3Dn]
+            color.new(#1B4332, 0)
 
 // ---- DYNAMIC COLUMN CALCULATION ----
-// Calculate visible columns dynamically
-basic_cols = show_basic ? 4 : 0  // Name, Price, Chg Open %, Performance
-premp_cols = show_premp ? 1 : 0  // Pre-MP
-postmp_cols = show_postmp ? 1 : 0  // Post-MP
-price_level_cols = show_price_levels ? 2 : 0  // PDL, PDH (now integrated between Name and Price)
-metric_cols = show_metrics ? 3 : 0  // Metric1/2/3 (EMA/SMA values)
-distance_cols = show_distances ? 3 : 0  // 3 distance columns
-trading_cols = show_trading ? 3 : 0  // Trigger, Stop, R:R
-slingshot_cols = show_slingshot ? 2 : 0  // SlingShot?, Trigger Price
-pv_breakout_cols = show_pv_breakout ? 2 : 0  // PV Breakout, Breakout Price
-combo_cols = show_combos ? 5 : 0  // Kicker, Oops, OEL/OEH, IN/EN, 3Bar
-notes_cols = show_notes ? 1 : 0  // Industry
+basic_cols = show_basic ? 4 : 0
+premp_cols = show_premp ? 1 : 0
+postmp_cols = show_postmp ? 1 : 0
+price_level_cols = show_price_levels ? 2 : 0
+buyprice_cols = show_buyprice ? 1 : 0
+metric_cols = show_metrics ? 3 : 0
+distance_cols = show_distances ? 3 : 0
+trading_cols = show_trading ? 3 : 0
+slingshot_cols = show_slingshot ? 2 : 0
+pv_breakout_cols = show_pv_breakout ? 2 : 0
+combo_cols = show_combos ? 5 : 0
+notes_cols = show_notes ? 1 : 0
 
-visible_cols = basic_cols + premp_cols + postmp_cols + price_level_cols + metric_cols + distance_cols + trading_cols + slingshot_cols + pv_breakout_cols + combo_cols + notes_cols
+visible_cols = basic_cols + premp_cols + postmp_cols + price_level_cols + buyprice_cols + metric_cols + distance_cols + trading_cols + slingshot_cols + pv_breakout_cols + combo_cols + notes_cols
 total_cols = visible_cols + col_offset
 
 // ---- TABLE ----
@@ -359,19 +327,16 @@ header_row = row_offset
 // ---- DYNAMIC TABLE HEADER GENERATION ----
 current_col = col_offset
 
-// Basic Info columns
 if show_basic
     table.cell(tab, current_col, header_row, mode == 'Name' ? "Name" : "Ticker", bgcolor=color.gray, text_color=color.white, text_size=tab_size, text_font_family=font)
     current_col += 1
 
-// Price Level columns (moved after Name, before Price)
 if show_price_levels
     table.cell(tab, current_col, header_row, "PDL", bgcolor=color.gray, text_color=color.white, text_size=tab_size, text_font_family=font)
     current_col += 1
     table.cell(tab, current_col, header_row, "PDH", bgcolor=color.gray, text_color=color.white, text_size=tab_size, text_font_family=font)
     current_col += 1
 
-// Pre-MP column (separate control)
 if show_premp
     table.cell(tab, current_col, header_row, "Pre-MP", bgcolor=color.yellow, text_color=color.black, text_size=tab_size, text_font_family=font)
     current_col += 1
@@ -384,13 +349,14 @@ if show_basic
     table.cell(tab, current_col, header_row, "Chg Daily%", bgcolor=color.gray, text_color=color.white, text_size=tab_size, text_font_family=font)
     current_col += 1
 
-// Post-MP column (separate control)
 if show_postmp
     table.cell(tab, current_col, header_row, "Post-MP", bgcolor=color.yellow, text_color=color.black, text_size=tab_size, text_font_family=font)
     current_col += 1
 
+if show_buyprice
+    table.cell(tab, current_col, header_row, "Buy Price", bgcolor=color.new(#1A5276, 0), text_color=color.white, text_size=tab_size, text_font_family=font)
+    current_col += 1
 
-// Trading columns
 if show_trading
     table.cell(tab, current_col, header_row, "Trigger", bgcolor=color.navy, text_color=color.white, text_size=tab_size, text_font_family=font)
     current_col += 1
@@ -399,21 +365,18 @@ if show_trading
     table.cell(tab, current_col, header_row, "R:R", bgcolor=color.gray, text_color=color.white, text_size=tab_size, text_font_family=font)
     current_col += 1
 
-// Slingshot columns
 if show_slingshot
     table.cell(tab, current_col, header_row, "SlingShot?", bgcolor=color.new(#B8660A, 50), text_color=color.white, text_size=tab_size, text_font_family=font)
     current_col += 1
     table.cell(tab, current_col, header_row, "Trigger Price", bgcolor=color.new(#B8660A, 50), text_color=color.white, text_size=tab_size, text_font_family=font)
     current_col += 1
 
-// Price & Volume Breakout columns
 if show_pv_breakout
     table.cell(tab, current_col, header_row, "PV Breakout", bgcolor=color.teal, text_color=color.white, text_size=tab_size, text_font_family=font)
     current_col += 1
     table.cell(tab, current_col, header_row, "Breakout Price", bgcolor=color.teal, text_color=color.white, text_size=tab_size, text_font_family=font)
     current_col += 1
 
-// Combo columns
 if show_combos
     table.cell(tab, current_col, header_row, "Kicker", bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=tab_size, text_font_family=font)
     current_col += 1
@@ -426,7 +389,6 @@ if show_combos
     table.cell(tab, current_col, header_row, "3Bar", bgcolor=color.new(color.gray, 85), text_color=color.white, text_size=tab_size, text_font_family=font)
     current_col += 1
 
-// Metrics columns (EMA/SMA values)
 if show_metrics
     table.cell(tab, current_col, header_row, val_ema1, bgcolor=color.navy, text_color=color.white, text_size=tab_size, text_font_family=font)
     current_col += 1
@@ -435,7 +397,6 @@ if show_metrics
     table.cell(tab, current_col, header_row, val_ema3, bgcolor=color.navy, text_color=color.white, text_size=tab_size, text_font_family=font)
     current_col += 1
 
-// Distance columns (separated from metrics)
 if show_distances
     table.cell(tab, current_col, header_row, "Dist to " + val_ema1, bgcolor=color.blue, text_color=color.white, text_size=tab_size, text_font_family=font)
     current_col += 1
@@ -444,7 +405,6 @@ if show_distances
     table.cell(tab, current_col, header_row, "Dist to " + val_ema3, bgcolor=color.blue, text_color=color.white, text_size=tab_size, text_font_family=font)
     current_col += 1
 
-// Industry column
 if show_notes
     table.cell(tab, current_col, header_row, "Industry", bgcolor=color.purple, text_color=color.white, text_size=tab_size, text_font_family=font)
     current_col += 1
@@ -454,26 +414,25 @@ fill_offset(row) =>
         for j = 0 to col_offset - 1
             table.cell(tab, j, row, "", text_color=color.new(color.white, 100))
 
-// Dynamic Table row function with conditional column rendering
-_t(show, tkr, name, txtcol, bgcol, chg, trigger, stop, notes, base_row, sling, sling_price, pv_signal, pv_price,
+// Dynamic Table row function
+// p = close (from _fetch_tf), o = open (from _fetch_tf), premarket from _fetch_D
+// buy_price = string input (e.g. "240-220")
+_t(show, tkr, name, txtcol, bgcol, chg, trigger, stop, notes, buy_price, base_row,
+   p, o, premarket,
+   sling, sling_price, pv_signal, pv_price,
    kicker, oopsUp, oopsDn, oel, oeh, inside, engulf, b3Up, b3Dn, pdh, pdl, symbol_index) =>
     if show and (tkr != '' or name == "-")
         fill_offset(base_row)
 
-        // Calculate all data (only compute what's needed)
-        p = show_basic or show_price_levels or show_distances or show_trading ? _price(tkr) : na
-        o = show_basic ? _open(tkr) : na
         chg_open = show_basic and not na(o) and not na(p) ? ((p - o) / o * 100) : na
         chg_open_str = show_basic ? (na(chg_open) ? "" : str.tostring(chg_open, format.percent)) : ""
 
-        // Pre-market and Post-market data
-        float premarket = show_premp ? _premarket_chg(tkr) : na
-        float postmarket = show_postmp ? _postmarket_chg(tkr) : na
+        float postmarket = 0.0
 
-        // Metrics (only calculate if needed)
-        m1 = show_metrics or show_distances ? _metric_val(tkr, val_ema1) : na
-        m2 = show_metrics or show_distances ? _metric_val(tkr, val_ema2) : na
-        m3 = show_metrics or show_distances ? _metric_val(tkr, val_ema3) : na
+        // Metrics computed from fetched close series (no request.security)
+        m1 = show_metrics or show_distances ? (val_ema1 == 'EMA 10' ? ta.ema(p, 10) : val_ema1 == 'EMA 20' ? ta.ema(p, 20) : ta.sma(p, 50)) : na
+        m2 = show_metrics or show_distances ? (val_ema2 == 'EMA 10' ? ta.ema(p, 10) : val_ema2 == 'EMA 20' ? ta.ema(p, 20) : ta.sma(p, 50)) : na
+        m3 = show_metrics or show_distances ? (val_ema3 == 'EMA 10' ? ta.ema(p, 10) : val_ema3 == 'EMA 20' ? ta.ema(p, 20) : ta.sma(p, 50)) : na
         m1_s = show_metrics ? (na(m1) ? "" : str.tostring(m1, "#.##")) : ""
         m2_s = show_metrics ? (na(m2) ? "" : str.tostring(m2, "#.##")) : ""
         m3_s = show_metrics ? (na(m3) ? "" : str.tostring(m3, "#.##")) : ""
@@ -484,12 +443,10 @@ _t(show, tkr, name, txtcol, bgcol, chg, trigger, stop, notes, base_row, sling, s
         d2_s = show_distances ? (na(d2) ? "" : str.tostring(d2, "#.##") + "%") : ""
         d3_s = show_distances ? (na(d3) ? "" : str.tostring(d3, "#.##") + "%") : ""
 
-        // Trading data
         trigger_cell = show_trading ? (trigger == '' ? '' : trigger) : ''
         stop_cell = show_trading ? (stop == '' ? '' : stop) : ''
         notes_cell = show_notes ? (notes == '' ? '' : notes) : ''
 
-        // Risk:Reward calculation: (trigger - current_price) / (trigger - stop)
         float rr_ratio = na
         rr_cell = ''
         if show_trading and trigger_cell != '' and stop_cell != '' and not na(p)
@@ -502,14 +459,11 @@ _t(show, tkr, name, txtcol, bgcol, chg, trigger, stop, notes, base_row, sling, s
                     rr_ratio := reward / risk
                     rr_cell := str.tostring(rr_ratio, "#.##")
 
-        // Colors
         trigger_txt_color = show_trading ? _get_value_text_color(trigger_cell, p) : color.white
         trigger_bg_color = show_trading ? _get_value_bg_color(trigger_cell, p) : color.new(#2D3748, 0)
         stop_txt_color = show_trading ? _get_value_text_color(stop_cell, p) : color.white
         stop_bg_color = show_trading ? _get_value_bg_color(stop_cell, p) : color.new(#2D3748, 0)
-
-        // R:R colors: green for favorable (>1), red for unfavorable (<1), gray for neutral
-        rr_txt_color = show_trading ? color.white : color.white
+        rr_txt_color = color.white
         rr_bg_color = show_trading ? (rr_cell == '' or na(rr_ratio) ? color.new(#2D3748, 0) : rr_ratio > 1 ? color.new(#1B4332, 0) : rr_ratio < 1 ? color.new(#7D1007, 0) : color.new(#2D3748, 0)) : color.new(#2D3748, 0)
 
         pdh_txt_color = show_price_levels ? _get_value_text_color(str.tostring(pdh, "#.##"), p) : color.white
@@ -517,28 +471,22 @@ _t(show, tkr, name, txtcol, bgcol, chg, trigger, stop, notes, base_row, sling, s
         pdl_txt_color = show_price_levels ? _get_value_text_color(str.tostring(pdl, "#.##"), p) : color.white
         pdl_bg_color = show_price_levels ? _get_value_bg_color(str.tostring(pdl, "#.##"), p) : color.new(#2D3748, 0)
 
-        // Performance column colors - simplified to only Chg %
-        perf_txt_color = show_basic ? color.white : color.white
+        perf_txt_color = color.white
         perf_bg_color = show_basic ? (chg > 0 ? color.new(#1B4332, 0) : chg < 0 ? color.new(#7D1007, 0) : color.new(#2D3748, 0)) : color.new(#2D3748, 0)
-
         string valFormatted = show_basic ? str.tostring(chg, format.percent) : ""
 
-        // Dynamic column placement
         current_col = col_offset
 
-        // Basic Info columns
         if show_basic
             table.cell(tab, current_col, base_row, (mode == 'Name' and name == '') or mode == 'Tooltip' ? _name(tkr) : name, text_color=txtcol, text_size=tab_size, bgcolor=bgcol, text_font_family=font, tooltip=(mode == 'Tooltip' and name == '') or mode == 'Name' ? na : name)
             current_col += 1
 
-        // Price Level columns (moved after Name, before Price)
         if show_price_levels
             table.cell(tab, current_col, base_row, na(pdl) ? "" : str.tostring(pdl, "#.##"), text_color=pdl_txt_color, text_size=tab_size, bgcolor=pdl_bg_color, text_font_family=font)
             current_col += 1
             table.cell(tab, current_col, base_row, na(pdh) ? "" : str.tostring(pdh, "#.##"), text_color=pdh_txt_color, text_size=tab_size, bgcolor=pdh_bg_color, text_font_family=font)
             current_col += 1
 
-        // Pre-market column (separate control)
         if show_premp
             premarket_str = na(premarket) ? "" : str.tostring(premarket, format.percent)
             premarket_color = na(premarket) ? color.black : (premarket > 0 ? color.green : premarket < 0 ? color.red : color.black)
@@ -553,15 +501,16 @@ _t(show, tkr, name, txtcol, bgcol, chg, trigger, stop, notes, base_row, sling, s
             table.cell(tab, current_col, base_row, valFormatted, text_color=perf_txt_color, text_size=tab_size, bgcolor=perf_bg_color, text_font_family=font)
             current_col += 1
 
-        // Post-market column (separate control)
         if show_postmp
             postmarket_str = na(postmarket) ? "" : str.tostring(postmarket, format.percent)
             postmarket_color = na(postmarket) ? color.black : (postmarket > 0 ? color.green : postmarket < 0 ? color.red : color.black)
             table.cell(tab, current_col, base_row, postmarket_str, text_color=postmarket_color, text_size=tab_size, bgcolor=color.yellow, text_font_family=font)
             current_col += 1
 
+        if show_buyprice
+            table.cell(tab, current_col, base_row, buy_price, text_color=color.white, text_size=tab_size, bgcolor=color.new(#1A5276, 0), text_font_family=font)
+            current_col += 1
 
-        // Trading columns
         if show_trading
             table.cell(tab, current_col, base_row, trigger_cell, text_color=trigger_txt_color, text_size=tab_size, bgcolor=trigger_bg_color, text_font_family=font)
             current_col += 1
@@ -570,21 +519,18 @@ _t(show, tkr, name, txtcol, bgcol, chg, trigger, stop, notes, base_row, sling, s
             table.cell(tab, current_col, base_row, rr_cell, text_color=rr_txt_color, text_size=tab_size, bgcolor=rr_bg_color, text_font_family=font)
             current_col += 1
 
-        // Slingshot columns
         if show_slingshot
             table.cell(tab, current_col, base_row, sling ? "Yes" : "", text_color=color.white, text_size=tab_size, bgcolor=color.new(#B8660A, 50), text_font_family=font)
             current_col += 1
             table.cell(tab, current_col, base_row, sling and not na(sling_price) ? str.tostring(sling_price, '#.##') : "", text_color=color.white, text_size=tab_size, bgcolor=color.new(#B8660A, 50), text_font_family=font)
             current_col += 1
 
-        // Price & Volume Breakout columns
         if show_pv_breakout
             table.cell(tab, current_col, base_row, pv_signal, text_color=color.white, text_size=tab_size, bgcolor=pv_signal == "Long" ? color.new(color.green, 15) : pv_signal == "Short" ? color.new(color.red, 15) : color.new(color.teal, 15), text_font_family=font)
             current_col += 1
             table.cell(tab, current_col, base_row, not na(pv_price) ? str.tostring(pv_price, '#.##') : "", text_color=color.white, text_size=tab_size, bgcolor=color.new(color.teal, 25), text_font_family=font)
             current_col += 1
 
-        // Combo columns
         if show_combos
             table.cell(tab, current_col, base_row, kickerBool ? (kicker ? 'Kicker' : '') : '', bgcolor=kicker ? color.new(color.green, 10) : na, text_color=color.black, text_size=tab_size, text_font_family=font)
             current_col += 1
@@ -597,7 +543,6 @@ _t(show, tkr, name, txtcol, bgcol, chg, trigger, stop, notes, base_row, sling, s
             table.cell(tab, current_col, base_row, threeBarBool ? (b3Up ? '3Bar+' : b3Dn ? '3Bar-' : '') : '', bgcolor=b3Up ? color.new(color.green, 0) : b3Dn ? color.new(color.red, 0) : na, text_color=color.black, text_size=tab_size, text_font_family=font)
             current_col += 1
 
-        // Metrics columns (EMA/SMA values)
         if show_metrics
             table.cell(tab, current_col, base_row, m1_s, text_color=color.white, text_size=tab_size, bgcolor=color.new(color.navy, 40), text_font_family=font)
             current_col += 1
@@ -606,7 +551,6 @@ _t(show, tkr, name, txtcol, bgcol, chg, trigger, stop, notes, base_row, sling, s
             table.cell(tab, current_col, base_row, m3_s, text_color=color.white, text_size=tab_size, bgcolor=color.new(color.navy, 40), text_font_family=font)
             current_col += 1
 
-        // Distance columns (separated from metrics)
         if show_distances
             table.cell(tab, current_col, base_row, d1_s, text_color=color.white, text_size=tab_size, bgcolor=color.new(color.blue, 20), text_font_family=font)
             current_col += 1
@@ -615,7 +559,6 @@ _t(show, tkr, name, txtcol, bgcol, chg, trigger, stop, notes, base_row, sling, s
             table.cell(tab, current_col, base_row, d3_s, text_color=color.white, text_size=tab_size, bgcolor=color.new(color.blue, 20), text_font_family=font)
             current_col += 1
 
-        // Industry column
         if show_notes
             table.cell(tab, current_col, base_row, notes_cell, text_color=color.white, text_size=tab_size, bgcolor=color.new(color.purple, 20), text_font_family=font)
             current_col += 1
@@ -642,26 +585,24 @@ def get_template_footer() -> str:
 // --- END OF SCRIPT ---"""
 
 
-def generate_dashboard(csv_file: str = 'watchlist.csv', output_file: str = 'dashboard.pine'):
-    """Main function to generate dashboard.pine from watchlist CSV."""
+def generate_dashboard(csv_file: str = 'buyList.csv', output_file: str = 'dashboard.pine'):
+    """Main function to generate dashboard.pine from CSV."""
     try:
-        print(f"Reading watchlist CSV: {csv_file}")
-        df = read_watchlist_csv(csv_file)
+        print(f"Reading CSV: {csv_file}")
+        df = read_csv(csv_file)
 
         if df.empty:
             print("Error: No valid symbols found in CSV file.")
             return False
 
-        print(f"Found {len(df)} symbols in watchlist")
+        print(f"Found {len(df)} symbols")
 
-        # Generate dynamic sections
         print("Generating symbol inputs...")
         symbol_inputs = generate_symbol_inputs(df, max_symbols=20)
 
         print("Generating table rows...")
         table_rows = generate_table_rows(max_symbols=20)
 
-        # Assemble complete Pine Script
         print("Assembling Pine Script...")
         pinescript_content = get_template_header()
         pinescript_content += symbol_inputs
@@ -669,21 +610,20 @@ def generate_dashboard(csv_file: str = 'watchlist.csv', output_file: str = 'dash
         pinescript_content += table_rows
         pinescript_content += get_template_footer()
 
-        # Write to output file
         with open(output_file, 'w', encoding='utf-8') as f:
             f.write(pinescript_content)
 
         print(f"\n✅ Dashboard generated successfully: {output_file}")
-
-        # Print summary
         print("\n" + "="*60)
         print("SUMMARY")
         print("="*60)
         print(f"Symbols processed: {len(df)}")
         print(f"Output file: {output_file}")
-        print("\nFirst 5 symbols:")
-        for i, row in df.head(5).iterrows():
-            print(f"  {i+1}. {row['Ticker']}: Trigger={row['Trigger']}, Stop={row['Stop']}")
+        print(f"request.security calls: 2 per symbol x {min(len(df), 20)} symbols = {min(len(df), 20) * 2} unique calls")
+        print("\nSymbols:")
+        for i, row in df.head(20).iterrows():
+            bp = row['BuyPrice'] if row['BuyPrice'] else '-'
+            print(f"  {i+1}. {row['Ticker']}  BuyPrice={bp}")
         print("="*60)
 
         return True
@@ -695,24 +635,57 @@ def generate_dashboard(csv_file: str = 'watchlist.csv', output_file: str = 'dash
         return False
 
 
+def derive_output_name(csv_file: str) -> str:
+    """Derive output .pine filename from input CSV.
+    buyList_tzar.csv  ->  db_tzar.pine
+    buyList.csv       ->  dashboard.pine  (fallback)
+    """
+    base = os.path.basename(csv_file)
+    name, _ = os.path.splitext(base)          # e.g. "buyList_tzar"
+    if name.startswith('buyList_'):
+        suffix = name[len('buyList_'):]       # e.g. "tzar"
+        return f"db_{suffix}.pine"
+    return 'dashboard.pine'
+
+
 if __name__ == "__main__":
     import sys
-
-    # Allow command-line arguments for input and output files
-    csv_file = sys.argv[1] if len(sys.argv) > 1 else 'watchlist.csv'
-    output_file = sys.argv[2] if len(sys.argv) > 2 else 'dashboard.pine'
+    import glob
 
     print("="*60)
     print("TradingView Dashboard Generator")
     print("="*60)
-    print(f"Input CSV: {csv_file}")
-    print(f"Output file: {output_file}")
+
+    if len(sys.argv) > 1:
+        # Single file specified (optionally with explicit output name)
+        csv_file    = sys.argv[1]
+        output_file = sys.argv[2] if len(sys.argv) > 2 else derive_output_name(csv_file)
+        files = [(csv_file, output_file)]
+    else:
+        # No argument: process all buyList_*.csv files in the current directory
+        found = sorted(glob.glob('buyList_*.csv'))
+        if not found:
+            print("No buyList_*.csv files found in current directory.")
+            print("Usage: python3 gen_dashboard.py buyList_<name>.csv")
+            sys.exit(1)
+        files = [(f, derive_output_name(f)) for f in found]
+        print(f"Found {len(files)} file(s): {', '.join(f[0] for f in files)}")
+
     print("="*60 + "\n")
 
-    success = generate_dashboard(csv_file, output_file)
+    results = []
+    for csv_file, output_file in files:
+        print(f"Input CSV:   {csv_file}")
+        print(f"Output file: {output_file}")
+        success = generate_dashboard(csv_file, output_file)
+        results.append((csv_file, output_file, success))
+        print()
 
-    if success:
-        print("\n🎉 Generation complete! You can now load dashboard.pine into TradingView.")
-    else:
-        print("\n❌ Generation failed. Please check the errors above.")
+    print("="*60)
+    for csv_file, output_file, success in results:
+        status = "✅" if success else "❌"
+        print(f"  {status}  {csv_file} → {output_file}")
+    print("="*60)
+
+    if not all(r[2] for r in results):
         sys.exit(1)

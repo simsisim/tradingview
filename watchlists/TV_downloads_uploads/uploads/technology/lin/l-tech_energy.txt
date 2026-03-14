@@ -1,0 +1,7 @@
+###Energy
+CEG
+NEE
+ETR
+###Tech
+ANET
+MSFT

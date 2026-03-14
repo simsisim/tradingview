@@ -1,0 +1,416 @@
+https://www.tradingview.com/script/dKwos20x-Larry-Williams-Valuation-Index-tradeviZion/
+
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © TradeVizion
+// © 2024. All rights reserved.
+
+// ████████╗██████╗  █████╗ ██████╗ ███████╗██╗   ██╗██╗███████╗██╗ ██████╗ ███╗   ██╗
+// ╚══██╔══╝██╔══██╗██╔══██╗██╔══██╗██╔════╝██║   ██║██║╚══███╔╝██║██╔═══██╗████╗  ██║
+//    ██║   ██████╔╝███████║██║  ██║█████╗  ██║   ██║██║  ███╔╝ ██║██║   ██║██╔██╗ ██║
+//    ██║   ██╔══██╗██╔══██║██║  ██║██╔══╝  ╚██╗ ██╔╝██║ ███╔╝  ██║██║   ██║██║╚██╗██║
+//    ██║   ██║  ██║██║  ██║██████╔╝███████╗ ╚████╔╝ ██║███████╗██║╚██████╔╝██║ ╚████║
+//    ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝╚═════╝ ╚══════╝  ╚═══╝  ╚═╝╚══════╝╚═╝ ╚═════╝ ╚═╝  ╚═══╝
+
+//   $$\     $$$$$$$$\
+//   $$ |    \____$$  |
+// $$$$$$\       $$  /$$\    $$\
+// \_$$  _|     $$  / \$$\  $$  |
+//   $$ |      $$  /   \$$\$$  /
+//   $$ |$$\  $$  /     \$$$  /
+//   \$$$$  |$$$$$$$$\   \$  /
+//    \____/ \________|   \_/
+
+// Description: This script calculates Larry Williams' WillVal (Valuation) Index for multiple securities.
+// Created: 2024-10-02
+// Last Updated: 2026-01-03
+// Version: 2
+
+// Credits & Methodology:
+// This indicator implements Larry Williams' WillVal (Valuation) Index methodology,
+// originally developed in 1990 for assessing overvalued and undervalued conditions
+// in commodity markets. The WillVal Index measures current price relative to
+// historical price action to identify potential overbought/oversold conditions.
+//
+// Key aspects of Larry Williams' methodology:
+// - Uses dual exponential moving averages to create momentum oscillator
+// - Normalizes results to 0-100 scale using historical range
+// - Compares asset valuation against correlated securities
+// - Default 156-period lookback represents ~3 years of weekly data
+//
+// This implementation extends the original methodology with:
+// - Multi-security correlation analysis
+// - Adaptive threshold calculation
+// - Custom alert system
+// - Enhanced visualization options
+//
+// Reference: Williams, Larry R. "Long-Term Secrets to Short-Term Trading"
+// For more information on Larry Williams' complete methodology, refer to his published works.
+
+// Disclaimer: 
+// This script is provided for educational and informational purposes only. 
+// It is not intended as financial advice and should not be used as the sole basis for making trading decisions. 
+// Always conduct your own research and consult with a qualified financial advisor before trading.
+
+
+//@version=6
+indicator('Larry Williams Valuation Index [tradeviZion]', shorttitle = 'tZv-WVal', overlay = false)
+
+
+// =================================================================================
+// USER INPUTS - Key Settings for Intermediate Users
+// =================================================================================
+
+// Timeframe Selection - Choose your analysis timeframe
+// - Default (chart timeframe): Uses whatever timeframe your chart is on
+// - Custom timeframe: Forces all calculations to use a specific timeframe (e.g., weekly)
+
+g_security = 'Security Selection'
+useCustomTimeframe = input.bool(false, 'Use Custom Timeframe', inline = 'timeframe', group = g_security, tooltip = 'Enable to use a custom timeframe for calculations, disable to use the chart\'s timeframe', display = display.none)
+customTimeframe = input.timeframe('W', '', inline = 'timeframe', group = g_security, tooltip = 'Select the timeframe for valuation index calculations. Only applies if \'Use Custom Timeframe\' is enabled', display = display.none)
+
+showIndex1 = input.bool(true, 'Show Security 1', inline = 'sec1', group = g_security, tooltip = 'Enable/disable the first correlation security', display = display.none)
+correlationWithSecurity1 = input.symbol('DXY', 'Symbol', inline = 'sec1', group = g_security, display = display.none)
+
+showIndex2 = input.bool(true, 'Show Security 2', inline = 'sec2', group = g_security, tooltip = 'Enable/disable the second correlation security', display = display.none)
+correlationWithSecurity2 = input.symbol('GC1!', 'Symbol', inline = 'sec2', group = g_security, display = display.none)
+
+showIndex3 = input.bool(true, 'Show Security 3', inline = 'sec3', group = g_security, tooltip = 'Enable/disable the third correlation security', display = display.none)
+correlationWithSecurity3 = input.symbol('ZB1!', 'Symbol', inline = 'sec3', group = g_security, display = display.none)
+
+// Valuation Index Parameters - Core calculation settings
+// These control how the WillVal Index is calculated
+
+g_valuation = 'Valuation Index Parameters'
+valuationIndexLength1 = input.int(2, 'Short EMA Length', minval = 1, inline = 'vindex', group = g_valuation, tooltip = 'Length of the short and long-term EMA for valuation index calculation', display = display.none)
+valuationIndexLength2 = input.int(22, 'Long EMA Length', minval = 1, inline = 'vindex', group = g_valuation, display = display.none)
+vIndexRLength = input.int(26, 'VIndex R Length', group = g_valuation, tooltip = 'Lookback period for calculating the relative valuation index. Default is 156, representing 3 years of weekly bars as per Larry Williams\' original method.', minval = 1, display = display.none)
+
+
+// The default value of 156 represents 3 years of weekly data, as recommended by Larry Williams.
+// Users can adjust this value based on their preferred timeframe and analysis period.
+// Valuation Levels
+g_levels = 'Valuation Levels'
+indexColoring = input.string('ManualLevels', 'Index Coloring', options = ['ManualLevels', 'AutoLevels'], group = g_levels, tooltip = 'Choose how over/under valuation levels are determined.\nManual: Use fixed levels set by the user.\nAuto: Dynamically calculate levels based on recent price action.\nManual gives consistent levels, while Auto adapts to changing market conditions.', display = display.none)
+
+showLevels = input.bool(true, 'Show Levels', group = g_levels, tooltip = 'Display over/under valuation levels on the chart', display = display.none)
+
+// Manual Levels
+overValuationLevelManual = input.float(85, 'Over Valuation', inline = 'manualLevels', minval = 0, maxval = 100, group = g_levels, tooltip = 'Fixed level for over and under-valuation when using Manual mode.', display = display.none)
+underValuationLevelManual = input.float(15, 'Under Valuation', inline = 'manualLevels', minval = 0, maxval = 100, group = g_levels, display = display.none)
+
+// Auto Levels Parameters
+barAgoForLimits = input.int(50, 'Bars Lookback', inline = 'autoLevels', minval = 1, group = g_levels, tooltip = 'Bars Lookback: Number of recent bars to consider when calculating automatic levels.\nMultiplier: Factor to adjust the sensitivity of automatic levels.\nBoth are used only in Auto mode.', display = display.none)
+levelsMultiplier = input.float(5, 'Multiplier', inline = 'autoLevels', minval = 1, group = g_levels, display = display.none)
+
+// Table Settings
+g_table = 'Table Settings'
+showTable = input.bool(true, 'Show Table', inline = 'tableSettings', group = g_table, tooltip = '\'Show Table:\' toggles the display of the valuation index table.\n\'Position:\' determines where the table appears on the chart.\n\'Text Size:\' adjusts the font size of the table text.', display = display.none)
+
+tablePosition = input.string('Top Right', 'Position', options = ['Top Left', 'Top Center', 'Top Right', 'Middle Left', 'Middle Center', 'Middle Right', 'Bottom Left', 'Bottom Center', 'Bottom Right'], inline = 'tableSettings', group = g_table, display = display.none)
+
+tableTextSize = input.string('Small', 'Text Size', options = ['Tiny', 'Small', 'Normal', 'Large'], inline = 'tableSettings', group = g_table, display = display.none)
+
+showEmpoweringMessage = input.bool(defval = true, title = 'Show Empowering Message', tooltip = 'Enable or disable the empowering message in the table.', display = display.none)
+
+
+getTablePosition(tablePosition) =>
+    switch tablePosition
+        'Top Left' => position.top_left
+        'Top Center' => position.top_center
+        'Top Right' => position.top_right
+        'Middle Left' => position.middle_left
+        'Middle Center' => position.middle_center
+        'Middle Right' => position.middle_right
+        'Bottom Left' => position.bottom_left
+        'Bottom Center' => position.bottom_center
+        'Bottom Right' => position.bottom_right
+        => position.top_right // Default to top right if something goes wrong
+
+getTextSize(textSize) =>
+    switch textSize
+        'Tiny' => size.tiny
+        'Small' => size.small
+        'Normal' => size.normal
+        'Large' => size.large
+        => size.small // Default to small if something goes wrong
+
+textSizeValue = tableTextSize == 'Tiny' ? size.tiny :
+                 tableTextSize == 'Small' ? size.tiny :
+                 tableTextSize == 'Normal' ? size.small : size.normal
+
+
+// ------------------- Informative Messages and Rotation -------------------//
+
+// Define an array of neutral, educational messages
+var array<string> infoMessages = array.new_string()
+
+// Populate the infoMessages array with neutral statements
+
+if barstate.isfirst
+    array.push(infoMessages, 'Master Valuation Analysis')
+    array.push(infoMessages, 'Spot Overvalued and Undervalued Assets')
+    array.push(infoMessages, 'Trade with Confidence Using Data')
+    array.push(infoMessages, 'Multi-Asset Valuation Insights')
+    array.push(infoMessages, 'Disciplined Value Investing')
+    array.push(infoMessages, 'Precision Valuation Signals')
+    array.push(infoMessages, 'Maximize Your Analytical Edge')
+    array.push(infoMessages, 'Refine Your Trading Strategy')
+    array.push(infoMessages, 'Find True Market Value')
+    array.push(infoMessages, 'Advanced Valuation Tools')
+    array.push(infoMessages, 'Clarity in Market Analysis')
+    array.push(infoMessages, 'Adaptive Market Analysis')
+    array.push(infoMessages, 'Patience Reveals Value')
+    array.push(infoMessages, 'Focus on Fundamental Value')
+    array.push(infoMessages, 'Build Your Trading Edge')
+    array.push(infoMessages, 'Data-Driven Trading Decisions')
+    array.push(infoMessages, 'Trust Technical Analysis')
+
+
+// Rotate messages every 5 bars (approx. weekly on daily charts)
+var int SLOGAN_ROTATION_INTERVAL = 5
+
+// Calculate message index efficiently using integer division
+sloganIndex = int(bar_index / SLOGAN_ROTATION_INTERVAL) % array.size(infoMessages)
+shortSlogan = array.get(infoMessages, sloganIndex)
+
+// Empowering message for tooltip
+infoTooltip = 'Master the art of trading with reliable signals.\n\nAdapt to market conditions with proven strategies.\n\nTrade confidently, refine your approach, and achieve your trading goals.'
+
+// Color Settings
+g_colors = 'Color Settings'
+useColoredLines = input.bool(true, 'Color Lines by Valuation', group = g_colors, tooltip = 'When enabled, lines are colored based on over/under valuation status. When disabled, lines use their normal colors regardless of valuation.', display = display.none)
+useColoredTable = input.bool(true, 'Color Table by Valuation', group = g_colors, tooltip = 'When enabled, table cells are colored based on over/under valuation status. When disabled, table uses the normal line colors for each security.', display = display.none)
+headerColor = input.color(color.black, 'Header', inline = 'tableColors', group = g_colors, tooltip = 'Header: Background color for the table header.\nText: Color for all text in the table.')
+textColor = input.color(color.white, 'Text', inline = 'tableColors', group = g_colors)
+
+colorOverValue = input.color(color.red, 'Over Value', inline = 'indexColors', group = g_colors, tooltip = 'Over Value: Color for over-valued status.\nUnder Value: Color for under-valued status.')
+colorUnderValue = input.color(color.green, 'Under Value', inline = 'indexColors', group = g_colors)
+colorNormalIndex1 = input.color(color.purple, 'Normal 1', inline = 'normalColors', group = g_colors, tooltip = 'Normal 1: Color for Security 1 when not over/under valued.\nNormal 2: Color for Security 2 when not over/under valued.\nNormal 3: Color for Security 3 when not over/under valued.')
+colorNormalIndex2 = input.color(color.orange, 'Normal 2', inline = 'normalColors', group = g_colors)
+colorNormalIndex3 = input.color(color.gray, 'Normal 3', inline = 'normalColors', group = g_colors)
+
+// Function to get the current timeframe
+getCurrentTimeframe() =>
+    useCustomTimeframe ? customTimeframe : timeframe.period
+
+// WVI function - Core Valuation Index Calculation
+// This function implements Larry Williams' WillVal (Valuation) Index methodology
+// It compares the current asset's price to a correlation security and normalizes the result
+//@returns float Normalized valuation index (0-100 scale)
+
+wvi(correlationSecurity) =>
+    // Get data for current timeframe (either custom or chart timeframe)
+    tf = getCurrentTimeframe()
+    c = request.security(syminfo.tickerid, tf, close)  // Current asset's price
+    cg = request.security(correlationSecurity, tf, close)  // Correlation security price
+
+    // Step 1: Calculate basic valuation ratio (current price vs correlation security)
+    // This creates the foundation - how expensive is the asset relative to its correlate?
+    valuationIndex = c / cg * 100
+
+    // Step 2: Apply dual EMA smoothing to create momentum oscillator
+    // Short EMA (valuationIndexLength1) minus Long EMA (valuationIndexLength2)
+    // This identifies trends in the valuation relationship
+    avgValuationIndex1 = ta.ema(valuationIndex, valuationIndexLength1)
+    avgValuationIndex2 = ta.ema(valuationIndex, valuationIndexLength2)
+    vIndex = avgValuationIndex1 - avgValuationIndex2
+
+    // Step 3: Find historical extremes for normalization
+    // Uses vIndexRLength bars (default 156 = ~3 years of weekly data per Larry Williams)
+    highestHighVIndex = ta.highest(vIndex, vIndexRLength)
+    lowestLowVindex = ta.lowest(vIndex, vIndexRLength)
+
+    // Step 4: Normalize to 0-100 scale using historical range
+    // This is Larry Williams' signature approach - put everything on comparable scale
+    vIndexR = (vIndex - lowestLowVindex) / (highestHighVIndex - lowestLowVindex) * 100
+    vIndexR
+
+// Calculate WVI for each index
+valuationIndex1 = wvi(correlationWithSecurity1)
+valuationIndex2 = wvi(correlationWithSecurity2)
+valuationIndex3 = wvi(correlationWithSecurity3)
+
+// Auto levels calculation - Dynamic Over/Under Valuation Thresholds
+// Instead of fixed levels (like 85/15), this calculates adaptive thresholds based on recent market behavior
+// This helps the indicator stay relevant during different market conditions
+//
+// - Takes average of all three valuation indices for stability
+// - Looks back 'barAgoForLimits' bars to find recent extremes
+// - Applies smoothing with 'levelsMultiplier' to create final thresholds
+// - Thresholds adjust automatically as market conditions change
+//
+//@return tuple [overValue, underValue] - Dynamic over/under valuation thresholds
+calcAutoLevels(index1, index2, index3) =>
+    // Average all indices for more stable level calculation
+    avgIndex = (index1 + index2 + index3) / 3
+
+    // Find recent price extremes (not all-time highs/lows)
+    highestHigh = ta.highest(avgIndex, barAgoForLimits)
+    lowestLow = ta.lowest(avgIndex, barAgoForLimits)
+
+    // Apply smoothing to create final thresholds
+    // levelsMultiplier creates a buffer zone around recent extremes
+    overValue = ta.sma(highestHigh, int(barAgoForLimits * levelsMultiplier))
+    underValue = ta.sma(lowestLow, int(barAgoForLimits * levelsMultiplier))
+
+    [overValue, underValue]
+
+[overValueAuto, underValueAuto] = calcAutoLevels(valuationIndex1, valuationIndex2, valuationIndex3)
+
+// Valuation status functions - Determine if asset is over/under/normal valued
+// These functions classify each valuation index reading based on your chosen thresholds
+
+// - isUndervalued: Index below threshold = potential buying opportunity
+// - isOvervalued: Index above threshold = potential selling opportunity
+// - isNormal: Index between thresholds = neutral valuation
+// - Supports both Manual (fixed) and Auto (adaptive) thresholds
+//
+//@param index float The valuation index value to classify
+//@returns bool True if condition met, false otherwise
+isUndervalued(index) =>
+    indexColoring == 'AutoLevels' ? index < underValueAuto : index < underValuationLevelManual
+
+isOvervalued(index) =>
+    indexColoring == 'AutoLevels' ? index > overValueAuto : index > overValuationLevelManual
+
+isNormal(index) =>
+    indexColoring == 'AutoLevels' ? index >= underValueAuto and index <= overValueAuto : index >= underValuationLevelManual and index <= overValuationLevelManual
+
+// Plotting with optional coloring
+plotColor1 = useColoredLines ? (isOvervalued(valuationIndex1) ? colorOverValue : isUndervalued(valuationIndex1) ? colorUnderValue : colorNormalIndex1) : colorNormalIndex1
+plotColor2 = useColoredLines ? (isOvervalued(valuationIndex2) ? colorOverValue : isUndervalued(valuationIndex2) ? colorUnderValue : colorNormalIndex2) : colorNormalIndex2
+plotColor3 = useColoredLines ? (isOvervalued(valuationIndex3) ? colorOverValue : isUndervalued(valuationIndex3) ? colorUnderValue : colorNormalIndex3) : colorNormalIndex3
+
+plot(showIndex1 ? valuationIndex1 : na, color = plotColor1, title = 'Index 1')
+plot(showIndex2 ? valuationIndex2 : na, color = plotColor2, title = 'Index 2')
+plot(showIndex3 ? valuationIndex3 : na, color = plotColor3, title = 'Index 3')
+
+// Plotting levels
+plot(showLevels and indexColoring == 'ManualLevels' ? overValuationLevelManual : na, 'Over Valuation Level Manual', color = color.new(colorOverValue, 50), style = plot.style_line)
+plot(showLevels and indexColoring == 'ManualLevels' ? underValuationLevelManual : na, 'Under Valuation Level Manual', color = color.new(colorUnderValue, 50), style = plot.style_line)
+
+plot(showLevels and indexColoring == 'AutoLevels' ? overValueAuto : na, 'Over Value Auto', color = color.new(colorOverValue, 50), style = plot.style_line)
+plot(showLevels and indexColoring == 'AutoLevels' ? underValueAuto : na, 'Under Value Auto', color = color.new(colorUnderValue, 50), style = plot.style_line)
+
+// Function to get base ticker name - Robust symbol parsing
+// Handles various symbol formats (e.g., "NASDAQ:TSLA" -> "TSLA", "TSLA" -> "TSLA")
+//@return string Clean ticker name for display in alerts and table
+getBaseTickerName(sym) =>
+    // Split on colon and return the last part (handles exchanges like NASDAQ:TSLA)
+    parts = str.split(sym, ':')
+    array.size(parts) > 1 ? array.get(parts, array.size(parts) - 1) : sym
+
+// Table
+if showTable
+    var table indexTable = table.new(getTablePosition(tablePosition), 4, 5, border_width = 1)
+
+    textSize = getTextSize(tableTextSize)
+
+    table.cell(indexTable, 0, 0, 'Security', bgcolor = headerColor, text_color = textColor, text_size = textSize)
+    table.cell(indexTable, 1, 0, 'Value', bgcolor = headerColor, text_color = textColor, text_size = textSize)
+    table.cell(indexTable, 2, 0, 'Status', bgcolor = headerColor, text_color = textColor, text_size = textSize)
+    table.cell(indexTable, 3, 0, 'Color', bgcolor = headerColor, text_color = textColor, text_size = textSize)
+
+    if showIndex1
+        table.cell(indexTable, 0, 1, getBaseTickerName(correlationWithSecurity1), bgcolor = headerColor, text_color = textColor, text_size = textSize)
+        table.cell(indexTable, 1, 1, str.tostring(valuationIndex1, '#.##'), bgcolor = headerColor, text_color = textColor, text_size = textSize)
+        status1 = isOvervalued(valuationIndex1) ? 'Over' : isUndervalued(valuationIndex1) ? 'Under' : 'Normal'
+        table.cell(indexTable, 2, 1, status1, bgcolor = headerColor, text_color = textColor, text_size = textSize)
+        tableColor1 = useColoredTable ? (isOvervalued(valuationIndex1) ? colorOverValue : isUndervalued(valuationIndex1) ? colorUnderValue : colorNormalIndex1) : colorNormalIndex1
+        table.cell(indexTable, 3, 1, ' ', bgcolor = tableColor1, text_size = textSize)
+
+    if showIndex2
+        table.cell(indexTable, 0, 2, getBaseTickerName(correlationWithSecurity2), bgcolor = headerColor, text_color = textColor, text_size = textSize)
+        table.cell(indexTable, 1, 2, str.tostring(valuationIndex2, '#.##'), bgcolor = headerColor, text_color = textColor, text_size = textSize)
+        status2 = isOvervalued(valuationIndex2) ? 'Over' : isUndervalued(valuationIndex2) ? 'Under' : 'Normal'
+        table.cell(indexTable, 2, 2, status2, bgcolor = headerColor, text_color = textColor, text_size = textSize)
+        tableColor2 = useColoredTable ? (isOvervalued(valuationIndex2) ? colorOverValue : isUndervalued(valuationIndex2) ? colorUnderValue : colorNormalIndex2) : colorNormalIndex2
+        table.cell(indexTable, 3, 2, ' ', bgcolor = tableColor2, text_size = textSize)
+
+    if showIndex3
+        table.cell(indexTable, 0, 3, getBaseTickerName(correlationWithSecurity3), bgcolor = headerColor, text_color = textColor, text_size = textSize)
+        table.cell(indexTable, 1, 3, str.tostring(valuationIndex3, '#.##'), bgcolor = headerColor, text_color = textColor, text_size = textSize)
+        status3 = isOvervalued(valuationIndex3) ? 'Over' : isUndervalued(valuationIndex3) ? 'Under' : 'Normal'
+        table.cell(indexTable, 2, 3, status3, bgcolor = headerColor, text_color = textColor, text_size = textSize)
+        tableColor3 = useColoredTable ? (isOvervalued(valuationIndex3) ? colorOverValue : isUndervalued(valuationIndex3) ? colorUnderValue : colorNormalIndex3) : colorNormalIndex3
+        table.cell(indexTable, 3, 3, ' ', bgcolor = tableColor3, text_size = textSize)
+
+    // Dynamically merge the slogan row based on active timeframes
+    if showEmpoweringMessage
+        table.cell(indexTable, 0, 4, text = shortSlogan, bgcolor = headerColor, text_color = textColor, text_size = textSizeValue, text_halign = text.align_right, tooltip = infoTooltip)
+        table.merge_cells(indexTable, 0, 4, 3, 4)
+
+// Alert Settings
+g_alerts = 'Alert Settings'
+alertsEnabled = input.bool(false, 'Enable Alerts', group = g_alerts, tooltip = 'Turn on/off all alerts', display = display.none)
+requiredSecurities = input.int(2, 'Required Securities for Alert', minval = 1, maxval = 3, group = g_alerts, tooltip = 'Number of securities that must meet the condition to trigger an alert', display = display.none)
+alertFrequency = input.string('Once Per Bar Close', 'Alert Frequency', options = ['Once Per Bar', 'Once Per Bar Close'], group = g_alerts, tooltip = 'Once Per Bar: Alert can trigger any time during the bar\nOnce Per Bar Close: Alert only triggers at the close of a bar', display = display.none)
+
+alertOnOvervalued = input.bool(false, 'Alert on Overvalued', group = g_alerts, tooltip = 'Trigger alert when securities become overvalued', display = display.none)
+alertOnUndervalued = input.bool(false, 'Alert on Undervalued', group = g_alerts, tooltip = 'Trigger alert when securities become undervalued', display = display.none)
+alertOnOverToNormal = input.bool(true, 'Alert on Over to Normal', group = g_alerts, tooltip = 'Trigger alert when securities return to normal from overvalued', display = display.none)
+alertOnUnderToNormal = input.bool(true, 'Alert on Under to Normal', group = g_alerts, tooltip = 'Trigger alert when securities return to normal from undervalued', display = display.none)
+
+// Alert Functions - Multi-Security Alert System
+// Alerts trigger when enough securities meet your criteria simultaneously
+// This reduces false signals by requiring consensus across multiple assets
+
+// - requiredSecurities = How many of your 3 indices must agree
+// - Example: Set to 2 means at least 2 securities must be overvalued for alert
+// - This creates more reliable signals by avoiding single-security noise
+//
+//@param condition1, condition2, condition3 bool Conditions for each security
+//@returns bool True if enough securities meet the condition
+alertConditionMet(condition1, condition2, condition3) =>
+    count = (condition1 ? 1 : 0) + (condition2 ? 1 : 0) + (condition3 ? 1 : 0)
+    count >= requiredSecurities
+
+// Optimized alert message creation - manual array joining for Pine Script compatibility
+createAlertMessage(security1, security2, security3, alertType) =>
+    var string[] triggeredSecurities = array.new_string(0)
+    if security1
+        array.push(triggeredSecurities, getBaseTickerName(correlationWithSecurity1))
+    if security2
+        array.push(triggeredSecurities, getBaseTickerName(correlationWithSecurity2))
+    if security3
+        array.push(triggeredSecurities, getBaseTickerName(correlationWithSecurity3))
+
+    // Manually join array elements (Pine Script doesn't have str.join)
+    joinedSecurities = ''
+    for i = 0 to array.size(triggeredSecurities) - 1
+        if i > 0
+            joinedSecurities := joinedSecurities + ', '
+        joinedSecurities := joinedSecurities + array.get(triggeredSecurities, i)
+
+    message = alertType + ' alert triggered for: ' + joinedSecurities
+    message
+
+// Helper function to check valuation transition
+checkValuationTransition(currentStatus, previousStatus) => // Over to Normal (previousStatus == -1 and currentStatus == 0) or  // Under to Normal (previousStatus != 1 and currentStatus == 1) or  // Normal/Under to Over (previousStatus != -1 and currentStatus == -1)  // Normal/Over to Under
+    previousStatus == 1 and currentStatus == 0 or previousStatus == -1 and currentStatus == 0 or previousStatus != 1 and currentStatus == 1 or previousStatus != -1 and currentStatus == -1
+
+// Alert Conditions
+overvaluedCondition = alertConditionMet(showIndex1 and isOvervalued(valuationIndex1) and not isOvervalued(valuationIndex1[1]), showIndex2 and isOvervalued(valuationIndex2) and not isOvervalued(valuationIndex2[1]), showIndex3 and isOvervalued(valuationIndex3) and not isOvervalued(valuationIndex3[1]))
+
+undervaluedCondition = alertConditionMet(showIndex1 and isUndervalued(valuationIndex1) and not isUndervalued(valuationIndex1[1]), showIndex2 and isUndervalued(valuationIndex2) and not isUndervalued(valuationIndex2[1]), showIndex3 and isUndervalued(valuationIndex3) and not isUndervalued(valuationIndex3[1]))
+
+overToNormalCondition = alertConditionMet(showIndex1 and isOvervalued(valuationIndex1[1]) and isNormal(valuationIndex1), showIndex2 and isOvervalued(valuationIndex2[1]) and isNormal(valuationIndex2), showIndex3 and isOvervalued(valuationIndex3[1]) and isNormal(valuationIndex3))
+
+underToNormalCondition = alertConditionMet(showIndex1 and isUndervalued(valuationIndex1[1]) and isNormal(valuationIndex1), showIndex2 and isUndervalued(valuationIndex2[1]) and isNormal(valuationIndex2), showIndex3 and isUndervalued(valuationIndex3[1]) and isNormal(valuationIndex3))
+
+// Trigger Alerts
+alertFreq = alertFrequency == 'Once Per Bar' ? alert.freq_once_per_bar : alert.freq_once_per_bar_close
+
+if alertsEnabled
+    if alertOnOvervalued and overvaluedCondition
+        alert(createAlertMessage(showIndex1 and isOvervalued(valuationIndex1) and not isOvervalued(valuationIndex1[1]), showIndex2 and isOvervalued(valuationIndex2) and not isOvervalued(valuationIndex2[1]), showIndex3 and isOvervalued(valuationIndex3) and not isOvervalued(valuationIndex3[1]), 'Overvalued'), alertFreq)
+
+    if alertOnUndervalued and undervaluedCondition
+        alert(createAlertMessage(showIndex1 and isUndervalued(valuationIndex1) and not isUndervalued(valuationIndex1[1]), showIndex2 and isUndervalued(valuationIndex2) and not isUndervalued(valuationIndex2[1]), showIndex3 and isUndervalued(valuationIndex3) and not isUndervalued(valuationIndex3[1]), 'Undervalued'), alertFreq)
+
+    if alertOnOverToNormal and overToNormalCondition
+        alert(createAlertMessage(showIndex1 and isOvervalued(valuationIndex1[1]) and isNormal(valuationIndex1), showIndex2 and isOvervalued(valuationIndex2[1]) and isNormal(valuationIndex2), showIndex3 and isOvervalued(valuationIndex3[1]) and isNormal(valuationIndex3), 'Over to Normal'), alertFreq)
+
+    if alertOnUnderToNormal and underToNormalCondition
+        alert(createAlertMessage(showIndex1 and isUndervalued(valuationIndex1[1]) and isNormal(valuationIndex1), showIndex2 and isUndervalued(valuationIndex2[1]) and isNormal(valuationIndex2), showIndex3 and isUndervalued(valuationIndex3[1]) and isNormal(valuationIndex3), 'Under to Normal'), alertFreq)
+

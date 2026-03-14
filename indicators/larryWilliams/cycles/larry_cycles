@@ -1,0 +1,21 @@
+AI Overview
+Cyclical analysis in Larry Williams' gold trading on TradingView focuses on identifying the repetitive peaks and troughs of the market to determine the best times to buy or sell. He combines seasonal patterns, long-term cycles (like the 8-year cycle), and short-term "Williams Cycle Forecasts" to time gold, often anticipating major highs/lows for 2026
+. 
+Here is how to implement and utilize these cyclical tools on TradingView:
+1. Key Cyclical Tools on TradingView
+
+    Williams Cycle Forecast (Short-Term): This tool is designed to project potential price peaks (tops) and troughs (bottoms) for up to 3 months (66 candles) by amalgamating three consistent short-term cycles. You can find variations of this in the TradingView Community Scripts (search "Larry Williams Cycle").
+    Seasonality (Williams True Seasonal Index): Larry Williams heavily relies on seasonal patterns. In TradingView, you can look for indicators that display "Seasonal Trends" to see when gold typically rallies or declines based on historical data.
+    8-Year Cycle & Long-Term Cycles: Williams utilizes multi-year cycles to predict major turning points. His 2026 forecast, for example, looks at longer-term cycles to determine if gold is entering a major, multi-year, or a corrective phase. 
+
+2. How to Use Cycles in TradingView
+
+    Identify Turning Points: Use the Williams Cycle Forecast to find potential, not exact,, reversal dates. If the cycle tool shows a trough, look for long setups; if a peak, look for short setups.
+    Combine with Seasonality: The best setups occur when the cycle indicator confirms a turning point during a known seasonal trend (e.g., buying gold during a historically bullish month indicated by the Seasonality tool).
+    Use with 9.1/9.2 Setups: Use the cyclical analysis to filter the 9.1/9.2 setups. If the 9.1 (entry on 9 EMA) occurs near a predicted seasonal low, the probability of success is higher.
+    Look for Commercial Support: Combine cycle turns with COT (Commitment of Traders) data on TradingView (e.g., tradeviZion scripts) to ensure commercial users are buying, suggesting a major bottom is in. 
+
+3. Key 2026 Gold Outlook (Based on Larry Williams)
+
+    Constructive Path: Larry Williams' 2026 outlook suggests that despite recessionary fears, historical probabilities and cycles suggest a more constructive, potentially bullish path for assets, including metals.
+    Liquidity Drivers: Williams analyzes the Fed's balance sheet (liquidity cycle) as a key driver of gold prices, often looking for liquidity drainage to signal potential risk-off periods. 

@@ -1,0 +1,34 @@
+https://fr.tradingview.com/script/VpKGerjz-Williams-Vix-Fix-CC/
+
+//@version=5
+// Copyright (c) 2019-present, Franklin Moormann (cheatcountry)
+// Williams Vix Fix [CC] script may be freely distributed under the MIT license.
+indicator("Williams Vix Fix [CC]", overlay = false)
+
+requestSecurity(string _symbol, string _res, bool _repaints) => 
+    repIndex = _repaints ? 0 : barstate.isrealtime ? 1 : 0
+    resIndex = _repaints ? 0 : barstate.isrealtime ? 0 : 1
+    [h, l, o, c] = request.security(_symbol, _res, [high[repIndex], low[repIndex], open[repIndex], close[repIndex]])
+    [h[resIndex], l[resIndex], o[resIndex], c[resIndex]]
+
+var GRP1 = "General Settings"
+string res =       input.timeframe(title = "Resolution", defval = "", group = GRP1)
+int length =       input.int(title = "Length", defval = 22, minval = 2, step = 1, group = GRP1)
+bool rep =         input.bool(title = "Allow Repainting?", defval = false, group = GRP1)
+bool bar =         input.bool(title = "Allow Bar Color Change?", defval = true, group = GRP1)
+[h, l, o, c] =     requestSecurity(syminfo.tickerid, res, rep)
+
+float hc = ta.highest(c, length)
+float vixFix = hc != 0 ? (hc - l) / hc * 100 : 0
+
+float slo = vixFix > 5 ? 1 : vixFix < 5 ? -1 : 0
+int sig = slo > 0 ? slo > nz(slo[1]) ? 2 : 1 : slo < 0 ? slo < nz(slo[1]) ? -2 : -1 : 0
+alertcondition(ta.crossover(sig, 1), 'Strong Buy Signal', 'Strong Bullish Change Detected')
+alertcondition(ta.crossunder(sig, -1), 'Strong Sell Signal', 'Strong Bearish Change Detected')
+alertcondition(ta.crossover(sig, 0), 'Buy Signal', 'Bullish Change Detected')
+alertcondition(ta.crossunder(sig, 0), 'Sell Signal', 'Bearish Change Detected')
+alertcondition(ta.crossover(sig, 1) or ta.crossover(sig, 0), "All Buy Signals", "Any Bullish Change Detected")
+alertcondition(ta.crossunder(sig, -1) or ta.crossunder(sig, 0), "All Sell Signals", "Any Bearish Change Detected")
+color wvfColor = sig > 1 ? color.green : sig > 0 ? color.lime : sig < -1 ? color.maroon : sig < 0 ? color.red : na
+barcolor(bar ? wvfColor : na)
+plot(vixFix, title = 'WilliamsVixFix', color = wvfColor, linewidth = 2)

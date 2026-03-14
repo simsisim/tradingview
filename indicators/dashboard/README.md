@@ -1,198 +1,155 @@
 # TradingView Dashboard Generator
 
-Generate a TradingView Pine Script dashboard from a CSV watchlist file.
+Generate a TradingView Pine Script dashboard from a buy-list CSV file.
 
 ## Quick Start
 
-1. **Edit your watchlist**: Update `watchlist.csv` with your stocks
-2. **Generate dashboard**: Run `python3 gen_dashboard.py`
-3. **Load in TradingView**: Copy `dashboard.pine` into TradingView
+1. **Create your buy list**: Make a CSV named `buyList_<name>.csv`
+2. **Generate dashboard**: `python3 gen_dashboard.py buyList_<name>.csv`
+3. **Load in TradingView**: Copy the generated `db_<name>.pine` into the Pine Editor
 
 ## Files
 
-- `watchlist.csv` - Your stock watchlist (edit this file)
-- `gen_dashboard.py` - Generator script
-- `dashboard.pine` - Generated Pine Script (don't edit manually)
-- `gen_monitor.py` - Old generator (deprecated)
+| File | Description |
+|------|-------------|
+| `buyList_<name>.csv` | Your input buy list (one per strategy/theme) |
+| `gen_dashboard.py` | Generator script |
+| `db_<name>.pine` | Generated Pine Script — load this into TradingView |
+
+---
 
 ## CSV Format
 
-Your `watchlist.csv` must have these columns:
-
 ```csv
-Ticker,Trigger,Stop,Notes
-AAPL,150.50,145.00,Tech / Strong earnings
-TSLA,250.00,240.00,EV / High growth
+ticker,BuyPrice,Trigger,Stop,Notes
+COHR,240-220,,,Optical/Photonics
+MU,375-350,241.53,231.97,Semiconductors
+TSM,345-325,,,Semiconductors
 ```
 
-**Column Descriptions:**
-- **Ticker**: Stock symbol (e.g., AAPL, GETTEX:RHM)
-- **Trigger**: Entry/trigger price level
-- **Stop**: Stop loss price
-- **Notes**: Industry or notes about the stock
+**Columns:**
+- **ticker** *(required)*: Stock symbol. Use exchange prefix if needed (e.g. `GETTEX:RHM`)
+- **BuyPrice** *(optional)*: Buy zone or price range (e.g. `240-220`)
+- **Trigger** *(optional)*: Entry/trigger price level
+- **Stop** *(optional)*: Stop loss price
+- **Notes** *(optional)*: Industry or notes
 
-## Usage
+Only `ticker` is required. All other columns can be omitted or left empty.
 
-### Basic (use defaults)
-```bash
-python3 gen_dashboard.py
-```
-Reads: `watchlist.csv` → Generates: `dashboard.pine`
+---
 
-### Custom input file
-```bash
-python3 gen_dashboard.py my_stocks.csv
-```
+## Running the Generator
 
-### Custom input and output
-```bash
-python3 gen_dashboard.py my_stocks.csv custom_output.pine
-```
+### Process all files at once (no argument)
 
-## Dashboard Features
-
-The generated dashboard includes:
-
-### Core Features
-- **20 Symbol Slots**: Automatically populated from CSV
-- **Real-time Price Data**: Live price updates
-- **Performance Metrics**: Daily change %, Change from open
-- **Previous Day Levels**: PDH (Previous Day High), PDL (Previous Day Low)
-
-### Technical Indicators
-- **EMA 10**: 10-period Exponential Moving Average
-- **EMA 20**: 20-period Exponential Moving Average
-- **SMA 50**: 50-period Simple Moving Average
-- **Distances**: Percentage distance to each metric
-
-### Trading Signals
-- **SlingShot**: Breakout pattern detection
-- **Price/Volume Breakout**: Combined price and volume breakouts
-- **Risk:Reward Ratio**: Automatic R:R calculations
-
-### Candle Patterns
-- **Kicker**: Strong reversal pattern
-- **Oops**: Failed breakout pattern
-- **OEL/OEH**: Open equals Low/High patterns
-- **Inside/Engulf**: Inside bars and engulfing patterns
-- **3Bar Break**: 3-bar breakout patterns
-
-### Column Visibility
-Toggle individual column groups:
-- Basic Info (Name, Price, Chg %, Performance)
-- Pre-MP (Pre-Market) - *disabled by default*
-- Post-MP (Post-Market) - *disabled by default*
-- Price Levels (PDL, PDH)
-- Metrics (EMA/SMA values)
-- Distances to Metrics
-- Trading (Trigger, Stop, R:R)
-- SlingShot Signals
-- Price/Volume Breakout
-- Candle Combos
-- Industry Notes
-
-## Default Settings
-
-The dashboard comes with these defaults:
-- **Metrics**: EMA 10, EMA 20, SMA 50
-- **Pre-MP/Post-MP**: Hidden by default
-
-## Workflow
-
-### 1. Update Watchlist
-Edit `watchlist.csv` with your current stock picks:
-```csv
-Ticker,Trigger,Stop,Notes
-NVDA,500.00,480.00,AI / Semiconductors
-MSFT,380.00,370.00,Tech / Cloud
-```
-
-### 2. Generate Dashboard
 ```bash
 python3 gen_dashboard.py
 ```
 
-Output:
+Finds every `buyList_*.csv` in the current folder and generates a `db_*.pine` for each:
+
 ```
-============================================================
-TradingView Dashboard Generator
-============================================================
-Reading watchlist CSV: watchlist.csv
-Found 24 symbols in watchlist
-Generating symbol inputs...
-Generating table rows...
-Assembling Pine Script...
-
-✅ Dashboard generated successfully: dashboard.pine
-
-============================================================
-SUMMARY
-============================================================
-Symbols processed: 24
-Output file: dashboard.pine
-...
+✅  buyList_tzar.csv   → db_tzar.pine
+✅  buyList_energy.csv → db_energy.pine
 ```
 
-### 3. Load in TradingView
-1. Open TradingView
-2. Go to Pine Editor
-3. Click "Open" → "Import script"
-4. Select `dashboard.pine`
-5. Click "Add to chart"
+### Single file — auto-named output
 
-## Troubleshooting
-
-### Script won't run
 ```bash
-# Install pandas if needed
+python3 gen_dashboard.py buyList_tzar.csv
+# → produces db_tzar.pine
+```
+
+### Single file — explicit output name
+
+```bash
+python3 gen_dashboard.py buyList_tzar.csv my_custom.pine
+```
+
+**Naming rule:** `buyList_<name>.csv` → `db_<name>.pine`
+
+### Install dependency if needed
+
+```bash
 pip install pandas
 ```
 
-### CSV not found
-Make sure `watchlist.csv` is in the same directory as `gen_dashboard.py`
+---
 
-### Generated file looks wrong
-- Check CSV format (must have: Ticker, Trigger, Stop, Notes)
-- Ensure no special characters in Notes that could break Pine Script
-- Single quotes in Notes are automatically escaped
+## Loading into TradingView
 
-### Symbols not showing in TradingView
-- Verify ticker symbols are correct (e.g., use NASDAQ:AAPL for AAPL)
-- Check that `show_1`, `show_2`, etc. are set to `true` for active symbols
-- Confirm symbols are not delisted or invalid
+1. Open TradingView → Pine Editor
+2. Click **Open** → **Import script**
+3. Select the generated `db_<name>.pine`
+4. Click **Add to chart**
 
-## Advanced Usage
+To update the dashboard (e.g. after editing your CSV), regenerate and re-import.
 
-### Multiple Watchlists
-Generate different dashboards for different strategies:
+---
 
+## Dashboard Features
+
+### Columns (toggleable in TradingView settings)
+
+| Column group | Default | Description |
+|---|---|---|
+| Basic Info | On | Ticker name, Price, Chg from Open %, Daily Chg % |
+| Buy Price | On | Buy zone from CSV (e.g. `240-220`) |
+| Metrics | On | EMA 10, EMA 20, SMA 50 values |
+| Distances | On | % distance from price to each metric |
+| SlingShot | On | Breakout pattern signal + trigger price |
+| PV Breakout | On | Price & Volume breakout signal |
+| Candle Combos | On | Kicker, Oops, OEL/OEH, Inside/Engulf, 3Bar |
+| Industry | On | Notes from CSV |
+| Trading | **Off** | Trigger, Stop, R:R ratio |
+| Price Levels | **Off** | Previous Day High / Low |
+| Pre-MP | **Off** | Pre-market change % |
+| Post-MP | **Off** | Post-market change % |
+
+All columns can be toggled on/off in the indicator settings panel.
+
+### Candle Patterns
+- **Kicker**: Strong bullish reversal
+- **Oops**: Failed breakout (Oops+ / Oops-)
+- **OEL/OEH**: Open equals Low / Open equals High
+- **Inside/Engulf**: Inside bar / Engulfing bar
+- **3Bar**: 3-bar breakout (3Bar+ / 3Bar-)
+
+### Technical Indicators
+- **SlingShot**: Close crosses above EMA of High (configurable length, default 4)
+- **PV Breakout**: Price AND volume breakout above rolling high, confirmed by trend filter
+- **Metrics**: EMA/SMA computed on the fetched close series — no extra data requests
+
+---
+
+## Technical Notes
+
+### Request limit (free plan)
+TradingView's free plan allows **40 unique `request.security()` calls** per script.
+The generator uses exactly **2 calls per symbol** (one for timeframe data, one for daily data),
+so 20 symbols = 40 calls — right at the limit with no upgrade needed.
+
+### Max symbols
+20 symbol slots per dashboard. To monitor more symbols, create multiple buy lists and run once:
 ```bash
-# Growth stocks
-python3 gen_dashboard.py growth_stocks.csv growth_dashboard.pine
-
-# Value stocks
-python3 gen_dashboard.py value_stocks.csv value_dashboard.pine
-
-# Day trading
-python3 gen_dashboard.py daytrading.csv daytrading_dashboard.pine
+# Create buyList_tech.csv, buyList_energy.csv, buyList_tzar.csv ...
+python3 gen_dashboard.py
+# → db_tech.pine, db_energy.pine, db_tzar.pine
 ```
+Add each generated `.pine` as a separate indicator on the same chart.
 
-### Automation
-Add to cron for daily updates:
-```bash
-# Generate dashboard every day at 8 AM
-0 8 * * * cd /path/to/dashboard+alert && python3 gen_dashboard.py
-```
+### Timeframe
+By default the dashboard forces Daily timeframe when the chart is on an intraday resolution.
+This can be toggled off in the indicator settings (Timeframe group).
 
-## Version History
+---
 
-- **v2.1**: Removed alert system (memory limit issues), optimized for performance
-- **v2.0**: Separated Pre-MP/Post-MP, separated metrics/distances, updated defaults
-- **v1.0**: Original gen_monitor.py (deprecated)
+## Troubleshooting
 
-## Support
-
-For issues or questions:
-1. Check CSV format is correct
-2. Verify pandas is installed: `pip install pandas`
-3. Run with verbose errors: `python3 gen_dashboard.py 2>&1 | tee error.log`
+| Problem | Fix |
+|---|---|
+| `ModuleNotFoundError: pandas` | `pip install pandas` |
+| CSV not found | Run the command from the same directory as `gen_dashboard.py` |
+| Ticker shows no data | Use exchange prefix, e.g. `NASDAQ:AAPL` instead of `AAPL` |
+| "Too many requests" error | Reduce symbols below 20, or add the script a second time for a second batch |
+| Single quotes breaking script | Already handled automatically — `'` is escaped in Notes/BuyPrice |

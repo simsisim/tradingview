@@ -1,0 +1,1146 @@
+//@version=5
+indicator("TZAR_alerts", shorttitle="TZAR Alerts", overlay=true, max_lines_count=500, max_labels_count=500)
+
+// ============================================================================
+// MASTER CONTROL
+// ============================================================================
+string g_master = "Master Control"
+enable_all = input.bool(true, "Enable All Alerts", group=g_master, display=display.data_window)
+show_all_visual = input.bool(true, "Show All Visual Clues", group=g_master, display=display.data_window)
+
+// ============================================================================
+// STOCK TRACKING - PRE-CONFIGURED WITH YOUR WATCHLIST
+// ============================================================================
+string g_stocks = "Stock Tracking"
+
+// Stock 1 - COHR [zone]
+enable_stock1 = input.bool(true, "Alert", inline="1", group=g_stocks, display=display.data_window)
+ticker1 = input.symbol("COHR", "COHR", inline="1", group=g_stocks, display=display.data_window)
+upper1 = input.float(240.0, "Upper", inline="1", group=g_stocks, display=display.data_window)
+lower1 = input.float(220.0, "Lower", inline="1", group=g_stocks, display=display.data_window)
+show_stock1 = input.bool(true, "Show", inline="1", group=g_stocks, display=display.data_window)
+
+// Stock 2 - LITE [zone]
+enable_stock2 = input.bool(true, "Alert", inline="2", group=g_stocks, display=display.data_window)
+ticker2 = input.symbol("LITE", "LITE", inline="2", group=g_stocks, display=display.data_window)
+upper2 = input.float(600.0, "Upper", inline="2", group=g_stocks, display=display.data_window)
+lower2 = input.float(550.0, "Lower", inline="2", group=g_stocks, display=display.data_window)
+show_stock2 = input.bool(true, "Show", inline="2", group=g_stocks, display=display.data_window)
+
+// Stock 3 - MU [zone]
+enable_stock3 = input.bool(true, "Alert", inline="3", group=g_stocks, display=display.data_window)
+ticker3 = input.symbol("MU", "MU", inline="3", group=g_stocks, display=display.data_window)
+upper3 = input.float(375.0, "Upper", inline="3", group=g_stocks, display=display.data_window)
+lower3 = input.float(350.0, "Lower", inline="3", group=g_stocks, display=display.data_window)
+show_stock3 = input.bool(true, "Show", inline="3", group=g_stocks, display=display.data_window)
+
+// Stock 4 - SNDK [zone]
+enable_stock4 = input.bool(true, "Alert", inline="4", group=g_stocks, display=display.data_window)
+ticker4 = input.symbol("SNDK", "SNDK", inline="4", group=g_stocks, display=display.data_window)
+upper4 = input.float(550.0, "Upper", inline="4", group=g_stocks, display=display.data_window)
+lower4 = input.float(500.0, "Lower", inline="4", group=g_stocks, display=display.data_window)
+show_stock4 = input.bool(true, "Show", inline="4", group=g_stocks, display=display.data_window)
+
+// Stock 5 - TSM [zone]
+enable_stock5 = input.bool(true, "Alert", inline="5", group=g_stocks, display=display.data_window)
+ticker5 = input.symbol("TSM", "TSM", inline="5", group=g_stocks, display=display.data_window)
+upper5 = input.float(345.0, "Upper", inline="5", group=g_stocks, display=display.data_window)
+lower5 = input.float(325.0, "Lower", inline="5", group=g_stocks, display=display.data_window)
+show_stock5 = input.bool(true, "Show", inline="5", group=g_stocks, display=display.data_window)
+
+// Stock 6 - BE [zone]
+enable_stock6 = input.bool(true, "Alert", inline="6", group=g_stocks, display=display.data_window)
+ticker6 = input.symbol("BE", "BE", inline="6", group=g_stocks, display=display.data_window)
+upper6 = input.float(140.0, "Upper", inline="6", group=g_stocks, display=display.data_window)
+lower6 = input.float(130.0, "Lower", inline="6", group=g_stocks, display=display.data_window)
+show_stock6 = input.bool(true, "Show", inline="6", group=g_stocks, display=display.data_window)
+
+// Stock 7 - AAOI [zone]
+enable_stock7 = input.bool(true, "Alert", inline="7", group=g_stocks, display=display.data_window)
+ticker7 = input.symbol("AAOI", "AAOI", inline="7", group=g_stocks, display=display.data_window)
+upper7 = input.float(80.0, "Upper", inline="7", group=g_stocks, display=display.data_window)
+lower7 = input.float(70.0, "Lower", inline="7", group=g_stocks, display=display.data_window)
+show_stock7 = input.bool(true, "Show", inline="7", group=g_stocks, display=display.data_window)
+
+// Stock 8 - SIMO [zone]
+enable_stock8 = input.bool(true, "Alert", inline="8", group=g_stocks, display=display.data_window)
+ticker8 = input.symbol("SIMO", "SIMO", inline="8", group=g_stocks, display=display.data_window)
+upper8 = input.float(120.0, "Upper", inline="8", group=g_stocks, display=display.data_window)
+lower8 = input.float(110.0, "Lower", inline="8", group=g_stocks, display=display.data_window)
+show_stock8 = input.bool(true, "Show", inline="8", group=g_stocks, display=display.data_window)
+
+// Stock 9 - CRDO [zone]
+enable_stock9 = input.bool(true, "Alert", inline="9", group=g_stocks, display=display.data_window)
+ticker9 = input.symbol("CRDO", "CRDO", inline="9", group=g_stocks, display=display.data_window)
+upper9 = input.float(100.0, "Upper", inline="9", group=g_stocks, display=display.data_window)
+lower9 = input.float(90.0, "Lower", inline="9", group=g_stocks, display=display.data_window)
+show_stock9 = input.bool(true, "Show", inline="9", group=g_stocks, display=display.data_window)
+
+// Stock 10 - INOD [zone]
+enable_stock10 = input.bool(true, "Alert", inline="10", group=g_stocks, display=display.data_window)
+ticker10 = input.symbol("INOD", "INOD", inline="10", group=g_stocks, display=display.data_window)
+upper10 = input.float(40.0, "Upper", inline="10", group=g_stocks, display=display.data_window)
+lower10 = input.float(35.0, "Lower", inline="10", group=g_stocks, display=display.data_window)
+show_stock10 = input.bool(true, "Show", inline="10", group=g_stocks, display=display.data_window)
+
+// Stock 11 - TSLA [level]
+enable_stock11 = input.bool(true, "Alert", inline="11", group=g_stocks, display=display.data_window)
+ticker11 = input.symbol("TSLA", "TSLA", inline="11", group=g_stocks, display=display.data_window)
+level11 = input.float(350.0, "Level", inline="11", group=g_stocks, display=display.data_window)
+show_stock11 = input.bool(true, "Show", inline="11", group=g_stocks, display=display.data_window)
+
+// Stock 12 - [empty]
+enable_stock12 = input.bool(false, "Alert", inline="12", group=g_stocks, display=display.data_window)
+ticker12 = input.symbol("", "", inline="12", group=g_stocks, display=display.data_window)
+upper12 = input.float(0.0, "Upper", inline="12", group=g_stocks, display=display.data_window)
+lower12 = input.float(0.0, "Lower", inline="12", group=g_stocks, display=display.data_window)
+show_stock12 = input.bool(false, "Show", inline="12", group=g_stocks, display=display.data_window)
+
+// Stock 13 - [empty]
+enable_stock13 = input.bool(false, "Alert", inline="13", group=g_stocks, display=display.data_window)
+ticker13 = input.symbol("", "", inline="13", group=g_stocks, display=display.data_window)
+upper13 = input.float(0.0, "Upper", inline="13", group=g_stocks, display=display.data_window)
+lower13 = input.float(0.0, "Lower", inline="13", group=g_stocks, display=display.data_window)
+show_stock13 = input.bool(false, "Show", inline="13", group=g_stocks, display=display.data_window)
+
+// Stock 14 - [empty]
+enable_stock14 = input.bool(false, "Alert", inline="14", group=g_stocks, display=display.data_window)
+ticker14 = input.symbol("", "", inline="14", group=g_stocks, display=display.data_window)
+upper14 = input.float(0.0, "Upper", inline="14", group=g_stocks, display=display.data_window)
+lower14 = input.float(0.0, "Lower", inline="14", group=g_stocks, display=display.data_window)
+show_stock14 = input.bool(false, "Show", inline="14", group=g_stocks, display=display.data_window)
+
+// Stock 15 - [empty]
+enable_stock15 = input.bool(false, "Alert", inline="15", group=g_stocks, display=display.data_window)
+ticker15 = input.symbol("", "", inline="15", group=g_stocks, display=display.data_window)
+upper15 = input.float(0.0, "Upper", inline="15", group=g_stocks, display=display.data_window)
+lower15 = input.float(0.0, "Lower", inline="15", group=g_stocks, display=display.data_window)
+show_stock15 = input.bool(false, "Show", inline="15", group=g_stocks, display=display.data_window)
+
+// Stock 16 - [empty]
+enable_stock16 = input.bool(false, "Alert", inline="16", group=g_stocks, display=display.data_window)
+ticker16 = input.symbol("", "", inline="16", group=g_stocks, display=display.data_window)
+upper16 = input.float(0.0, "Upper", inline="16", group=g_stocks, display=display.data_window)
+lower16 = input.float(0.0, "Lower", inline="16", group=g_stocks, display=display.data_window)
+show_stock16 = input.bool(false, "Show", inline="16", group=g_stocks, display=display.data_window)
+
+// Stock 17 - [empty]
+enable_stock17 = input.bool(false, "Alert", inline="17", group=g_stocks, display=display.data_window)
+ticker17 = input.symbol("", "", inline="17", group=g_stocks, display=display.data_window)
+upper17 = input.float(0.0, "Upper", inline="17", group=g_stocks, display=display.data_window)
+lower17 = input.float(0.0, "Lower", inline="17", group=g_stocks, display=display.data_window)
+show_stock17 = input.bool(false, "Show", inline="17", group=g_stocks, display=display.data_window)
+
+// Stock 18 - [empty]
+enable_stock18 = input.bool(false, "Alert", inline="18", group=g_stocks, display=display.data_window)
+ticker18 = input.symbol("", "", inline="18", group=g_stocks, display=display.data_window)
+upper18 = input.float(0.0, "Upper", inline="18", group=g_stocks, display=display.data_window)
+lower18 = input.float(0.0, "Lower", inline="18", group=g_stocks, display=display.data_window)
+show_stock18 = input.bool(false, "Show", inline="18", group=g_stocks, display=display.data_window)
+
+// Stock 19 - [empty]
+enable_stock19 = input.bool(false, "Alert", inline="19", group=g_stocks, display=display.data_window)
+ticker19 = input.symbol("", "", inline="19", group=g_stocks, display=display.data_window)
+upper19 = input.float(0.0, "Upper", inline="19", group=g_stocks, display=display.data_window)
+lower19 = input.float(0.0, "Lower", inline="19", group=g_stocks, display=display.data_window)
+show_stock19 = input.bool(false, "Show", inline="19", group=g_stocks, display=display.data_window)
+
+// Stock 20 - [empty]
+enable_stock20 = input.bool(false, "Alert", inline="20", group=g_stocks, display=display.data_window)
+ticker20 = input.symbol("", "", inline="20", group=g_stocks, display=display.data_window)
+upper20 = input.float(0.0, "Upper", inline="20", group=g_stocks, display=display.data_window)
+lower20 = input.float(0.0, "Lower", inline="20", group=g_stocks, display=display.data_window)
+show_stock20 = input.bool(false, "Show", inline="20", group=g_stocks, display=display.data_window)
+
+// Stock 21 - [empty]
+enable_stock21 = input.bool(false, "Alert", inline="21", group=g_stocks, display=display.data_window)
+ticker21 = input.symbol("", "", inline="21", group=g_stocks, display=display.data_window)
+upper21 = input.float(0.0, "Upper", inline="21", group=g_stocks, display=display.data_window)
+lower21 = input.float(0.0, "Lower", inline="21", group=g_stocks, display=display.data_window)
+show_stock21 = input.bool(false, "Show", inline="21", group=g_stocks, display=display.data_window)
+
+// Stock 22 - [empty]
+enable_stock22 = input.bool(false, "Alert", inline="22", group=g_stocks, display=display.data_window)
+ticker22 = input.symbol("", "", inline="22", group=g_stocks, display=display.data_window)
+upper22 = input.float(0.0, "Upper", inline="22", group=g_stocks, display=display.data_window)
+lower22 = input.float(0.0, "Lower", inline="22", group=g_stocks, display=display.data_window)
+show_stock22 = input.bool(false, "Show", inline="22", group=g_stocks, display=display.data_window)
+
+// Stock 23 - [empty]
+enable_stock23 = input.bool(false, "Alert", inline="23", group=g_stocks, display=display.data_window)
+ticker23 = input.symbol("", "", inline="23", group=g_stocks, display=display.data_window)
+upper23 = input.float(0.0, "Upper", inline="23", group=g_stocks, display=display.data_window)
+lower23 = input.float(0.0, "Lower", inline="23", group=g_stocks, display=display.data_window)
+show_stock23 = input.bool(false, "Show", inline="23", group=g_stocks, display=display.data_window)
+
+// Stock 24 - [empty]
+enable_stock24 = input.bool(false, "Alert", inline="24", group=g_stocks, display=display.data_window)
+ticker24 = input.symbol("", "", inline="24", group=g_stocks, display=display.data_window)
+upper24 = input.float(0.0, "Upper", inline="24", group=g_stocks, display=display.data_window)
+lower24 = input.float(0.0, "Lower", inline="24", group=g_stocks, display=display.data_window)
+show_stock24 = input.bool(false, "Show", inline="24", group=g_stocks, display=display.data_window)
+
+// Stock 25 - [empty]
+enable_stock25 = input.bool(false, "Alert", inline="25", group=g_stocks, display=display.data_window)
+ticker25 = input.symbol("", "", inline="25", group=g_stocks, display=display.data_window)
+upper25 = input.float(0.0, "Upper", inline="25", group=g_stocks, display=display.data_window)
+lower25 = input.float(0.0, "Lower", inline="25", group=g_stocks, display=display.data_window)
+show_stock25 = input.bool(false, "Show", inline="25", group=g_stocks, display=display.data_window)
+
+// Stock 26 - [empty]
+enable_stock26 = input.bool(false, "Alert", inline="26", group=g_stocks, display=display.data_window)
+ticker26 = input.symbol("", "", inline="26", group=g_stocks, display=display.data_window)
+upper26 = input.float(0.0, "Upper", inline="26", group=g_stocks, display=display.data_window)
+lower26 = input.float(0.0, "Lower", inline="26", group=g_stocks, display=display.data_window)
+show_stock26 = input.bool(false, "Show", inline="26", group=g_stocks, display=display.data_window)
+
+// Stock 27 - [empty]
+enable_stock27 = input.bool(false, "Alert", inline="27", group=g_stocks, display=display.data_window)
+ticker27 = input.symbol("", "", inline="27", group=g_stocks, display=display.data_window)
+upper27 = input.float(0.0, "Upper", inline="27", group=g_stocks, display=display.data_window)
+lower27 = input.float(0.0, "Lower", inline="27", group=g_stocks, display=display.data_window)
+show_stock27 = input.bool(false, "Show", inline="27", group=g_stocks, display=display.data_window)
+
+// Stock 28 - [empty]
+enable_stock28 = input.bool(false, "Alert", inline="28", group=g_stocks, display=display.data_window)
+ticker28 = input.symbol("", "", inline="28", group=g_stocks, display=display.data_window)
+upper28 = input.float(0.0, "Upper", inline="28", group=g_stocks, display=display.data_window)
+lower28 = input.float(0.0, "Lower", inline="28", group=g_stocks, display=display.data_window)
+show_stock28 = input.bool(false, "Show", inline="28", group=g_stocks, display=display.data_window)
+
+// Stock 29 - [empty]
+enable_stock29 = input.bool(false, "Alert", inline="29", group=g_stocks, display=display.data_window)
+ticker29 = input.symbol("", "", inline="29", group=g_stocks, display=display.data_window)
+upper29 = input.float(0.0, "Upper", inline="29", group=g_stocks, display=display.data_window)
+lower29 = input.float(0.0, "Lower", inline="29", group=g_stocks, display=display.data_window)
+show_stock29 = input.bool(false, "Show", inline="29", group=g_stocks, display=display.data_window)
+
+// Stock 30 - [empty]
+enable_stock30 = input.bool(false, "Alert", inline="30", group=g_stocks, display=display.data_window)
+ticker30 = input.symbol("", "", inline="30", group=g_stocks, display=display.data_window)
+upper30 = input.float(0.0, "Upper", inline="30", group=g_stocks, display=display.data_window)
+lower30 = input.float(0.0, "Lower", inline="30", group=g_stocks, display=display.data_window)
+show_stock30 = input.bool(false, "Show", inline="30", group=g_stocks, display=display.data_window)
+
+// Stock 31 - [empty]
+enable_stock31 = input.bool(false, "Alert", inline="31", group=g_stocks, display=display.data_window)
+ticker31 = input.symbol("", "", inline="31", group=g_stocks, display=display.data_window)
+upper31 = input.float(0.0, "Upper", inline="31", group=g_stocks, display=display.data_window)
+lower31 = input.float(0.0, "Lower", inline="31", group=g_stocks, display=display.data_window)
+show_stock31 = input.bool(false, "Show", inline="31", group=g_stocks, display=display.data_window)
+
+// Stock 32 - [empty]
+enable_stock32 = input.bool(false, "Alert", inline="32", group=g_stocks, display=display.data_window)
+ticker32 = input.symbol("", "", inline="32", group=g_stocks, display=display.data_window)
+upper32 = input.float(0.0, "Upper", inline="32", group=g_stocks, display=display.data_window)
+lower32 = input.float(0.0, "Lower", inline="32", group=g_stocks, display=display.data_window)
+show_stock32 = input.bool(false, "Show", inline="32", group=g_stocks, display=display.data_window)
+
+// Stock 33 - [empty]
+enable_stock33 = input.bool(false, "Alert", inline="33", group=g_stocks, display=display.data_window)
+ticker33 = input.symbol("", "", inline="33", group=g_stocks, display=display.data_window)
+upper33 = input.float(0.0, "Upper", inline="33", group=g_stocks, display=display.data_window)
+lower33 = input.float(0.0, "Lower", inline="33", group=g_stocks, display=display.data_window)
+show_stock33 = input.bool(false, "Show", inline="33", group=g_stocks, display=display.data_window)
+
+// Stock 34 - [empty]
+enable_stock34 = input.bool(false, "Alert", inline="34", group=g_stocks, display=display.data_window)
+ticker34 = input.symbol("", "", inline="34", group=g_stocks, display=display.data_window)
+upper34 = input.float(0.0, "Upper", inline="34", group=g_stocks, display=display.data_window)
+lower34 = input.float(0.0, "Lower", inline="34", group=g_stocks, display=display.data_window)
+show_stock34 = input.bool(false, "Show", inline="34", group=g_stocks, display=display.data_window)
+
+// Stock 35 - [empty]
+enable_stock35 = input.bool(false, "Alert", inline="35", group=g_stocks, display=display.data_window)
+ticker35 = input.symbol("", "", inline="35", group=g_stocks, display=display.data_window)
+upper35 = input.float(0.0, "Upper", inline="35", group=g_stocks, display=display.data_window)
+lower35 = input.float(0.0, "Lower", inline="35", group=g_stocks, display=display.data_window)
+show_stock35 = input.bool(false, "Show", inline="35", group=g_stocks, display=display.data_window)
+
+// Stock 36 - [empty]
+enable_stock36 = input.bool(false, "Alert", inline="36", group=g_stocks, display=display.data_window)
+ticker36 = input.symbol("", "", inline="36", group=g_stocks, display=display.data_window)
+upper36 = input.float(0.0, "Upper", inline="36", group=g_stocks, display=display.data_window)
+lower36 = input.float(0.0, "Lower", inline="36", group=g_stocks, display=display.data_window)
+show_stock36 = input.bool(false, "Show", inline="36", group=g_stocks, display=display.data_window)
+
+// Stock 37 - [empty]
+enable_stock37 = input.bool(false, "Alert", inline="37", group=g_stocks, display=display.data_window)
+ticker37 = input.symbol("", "", inline="37", group=g_stocks, display=display.data_window)
+upper37 = input.float(0.0, "Upper", inline="37", group=g_stocks, display=display.data_window)
+lower37 = input.float(0.0, "Lower", inline="37", group=g_stocks, display=display.data_window)
+show_stock37 = input.bool(false, "Show", inline="37", group=g_stocks, display=display.data_window)
+
+// Stock 38 - [empty]
+enable_stock38 = input.bool(false, "Alert", inline="38", group=g_stocks, display=display.data_window)
+ticker38 = input.symbol("", "", inline="38", group=g_stocks, display=display.data_window)
+upper38 = input.float(0.0, "Upper", inline="38", group=g_stocks, display=display.data_window)
+lower38 = input.float(0.0, "Lower", inline="38", group=g_stocks, display=display.data_window)
+show_stock38 = input.bool(false, "Show", inline="38", group=g_stocks, display=display.data_window)
+
+// Stock 39 - [empty]
+enable_stock39 = input.bool(false, "Alert", inline="39", group=g_stocks, display=display.data_window)
+ticker39 = input.symbol("", "", inline="39", group=g_stocks, display=display.data_window)
+upper39 = input.float(0.0, "Upper", inline="39", group=g_stocks, display=display.data_window)
+lower39 = input.float(0.0, "Lower", inline="39", group=g_stocks, display=display.data_window)
+show_stock39 = input.bool(false, "Show", inline="39", group=g_stocks, display=display.data_window)
+
+// Stock 40 - [empty]
+enable_stock40 = input.bool(false, "Alert", inline="40", group=g_stocks, display=display.data_window)
+ticker40 = input.symbol("", "", inline="40", group=g_stocks, display=display.data_window)
+upper40 = input.float(0.0, "Upper", inline="40", group=g_stocks, display=display.data_window)
+lower40 = input.float(0.0, "Lower", inline="40", group=g_stocks, display=display.data_window)
+show_stock40 = input.bool(false, "Show", inline="40", group=g_stocks, display=display.data_window)
+
+// ============================================================================
+// VISUAL SETTINGS
+// ============================================================================
+string g_visual = "Visual Settings"
+line_width = input.int(2, "Line Width", minval=1, maxval=4, group=g_visual, display=display.data_window)
+line_style_input = input.string("Solid", "Line Style", options=["Solid", "Dashed", "Dotted"], group=g_visual, display=display.data_window)
+extend_lines = input.bool(false, "Extend Lines to Right", group=g_visual, display=display.data_window)
+line_length = input.int(50, "Line Length (bars)", minval=10, maxval=500, group=g_visual, tooltip="Number of bars to extend lines when Extend to Right is disabled", display=display.data_window)
+show_labels = input.bool(true, "Show Labels", group=g_visual, display=display.data_window)
+buy_color = input.color(color.new(color.green, 0), "Buy Color", group=g_visual, display=display.data_window)
+zone_transparency = input.int(85, "Zone Fill Transparency", minval=0, maxval=100, group=g_visual, display=display.data_window)
+
+// Convert line style
+line_style = line_style_input == "Solid" ? line.style_solid :
+             line_style_input == "Dashed" ? line.style_dashed :
+             line.style_dotted
+
+// Convert line extension
+line_extend = extend_lines ? extend.right : extend.none
+
+// ============================================================================
+// ALERT SETTINGS
+// ============================================================================
+string g_settings = "Alert Settings"
+timeframe_alert = input.timeframe("", "Alert Timeframe (blank = current)", group=g_settings, display=display.data_window)
+
+// ============================================================================
+// GET PRICE DATA FOR SELECTED TIMEFRAME
+// ============================================================================
+tf = timeframe_alert == "" ? timeframe.period : timeframe_alert
+
+// ============================================================================
+// GET PRICE DATA FOR EACH STOCK
+// ============================================================================
+stock1_close = enable_all and enable_stock1 and ticker1 != "" ? request.security(ticker1, tf, close, lookahead=barmerge.lookahead_off) : na
+stock2_close = enable_all and enable_stock2 and ticker2 != "" ? request.security(ticker2, tf, close, lookahead=barmerge.lookahead_off) : na
+stock3_close = enable_all and enable_stock3 and ticker3 != "" ? request.security(ticker3, tf, close, lookahead=barmerge.lookahead_off) : na
+stock4_close = enable_all and enable_stock4 and ticker4 != "" ? request.security(ticker4, tf, close, lookahead=barmerge.lookahead_off) : na
+stock5_close = enable_all and enable_stock5 and ticker5 != "" ? request.security(ticker5, tf, close, lookahead=barmerge.lookahead_off) : na
+stock6_close = enable_all and enable_stock6 and ticker6 != "" ? request.security(ticker6, tf, close, lookahead=barmerge.lookahead_off) : na
+stock7_close = enable_all and enable_stock7 and ticker7 != "" ? request.security(ticker7, tf, close, lookahead=barmerge.lookahead_off) : na
+stock8_close = enable_all and enable_stock8 and ticker8 != "" ? request.security(ticker8, tf, close, lookahead=barmerge.lookahead_off) : na
+stock9_close = enable_all and enable_stock9 and ticker9 != "" ? request.security(ticker9, tf, close, lookahead=barmerge.lookahead_off) : na
+stock10_close = enable_all and enable_stock10 and ticker10 != "" ? request.security(ticker10, tf, close, lookahead=barmerge.lookahead_off) : na
+stock11_close = enable_all and enable_stock11 and ticker11 != "" ? request.security(ticker11, tf, close, lookahead=barmerge.lookahead_off) : na
+stock12_close = enable_all and enable_stock12 and ticker12 != "" ? request.security(ticker12, tf, close, lookahead=barmerge.lookahead_off) : na
+stock13_close = enable_all and enable_stock13 and ticker13 != "" ? request.security(ticker13, tf, close, lookahead=barmerge.lookahead_off) : na
+stock14_close = enable_all and enable_stock14 and ticker14 != "" ? request.security(ticker14, tf, close, lookahead=barmerge.lookahead_off) : na
+stock15_close = enable_all and enable_stock15 and ticker15 != "" ? request.security(ticker15, tf, close, lookahead=barmerge.lookahead_off) : na
+stock16_close = enable_all and enable_stock16 and ticker16 != "" ? request.security(ticker16, tf, close, lookahead=barmerge.lookahead_off) : na
+stock17_close = enable_all and enable_stock17 and ticker17 != "" ? request.security(ticker17, tf, close, lookahead=barmerge.lookahead_off) : na
+stock18_close = enable_all and enable_stock18 and ticker18 != "" ? request.security(ticker18, tf, close, lookahead=barmerge.lookahead_off) : na
+stock19_close = enable_all and enable_stock19 and ticker19 != "" ? request.security(ticker19, tf, close, lookahead=barmerge.lookahead_off) : na
+stock20_close = enable_all and enable_stock20 and ticker20 != "" ? request.security(ticker20, tf, close, lookahead=barmerge.lookahead_off) : na
+stock21_close = enable_all and enable_stock21 and ticker21 != "" ? request.security(ticker21, tf, close, lookahead=barmerge.lookahead_off) : na
+stock22_close = enable_all and enable_stock22 and ticker22 != "" ? request.security(ticker22, tf, close, lookahead=barmerge.lookahead_off) : na
+stock23_close = enable_all and enable_stock23 and ticker23 != "" ? request.security(ticker23, tf, close, lookahead=barmerge.lookahead_off) : na
+stock24_close = enable_all and enable_stock24 and ticker24 != "" ? request.security(ticker24, tf, close, lookahead=barmerge.lookahead_off) : na
+stock25_close = enable_all and enable_stock25 and ticker25 != "" ? request.security(ticker25, tf, close, lookahead=barmerge.lookahead_off) : na
+stock26_close = enable_all and enable_stock26 and ticker26 != "" ? request.security(ticker26, tf, close, lookahead=barmerge.lookahead_off) : na
+stock27_close = enable_all and enable_stock27 and ticker27 != "" ? request.security(ticker27, tf, close, lookahead=barmerge.lookahead_off) : na
+stock28_close = enable_all and enable_stock28 and ticker28 != "" ? request.security(ticker28, tf, close, lookahead=barmerge.lookahead_off) : na
+stock29_close = enable_all and enable_stock29 and ticker29 != "" ? request.security(ticker29, tf, close, lookahead=barmerge.lookahead_off) : na
+stock30_close = enable_all and enable_stock30 and ticker30 != "" ? request.security(ticker30, tf, close, lookahead=barmerge.lookahead_off) : na
+stock31_close = enable_all and enable_stock31 and ticker31 != "" ? request.security(ticker31, tf, close, lookahead=barmerge.lookahead_off) : na
+stock32_close = enable_all and enable_stock32 and ticker32 != "" ? request.security(ticker32, tf, close, lookahead=barmerge.lookahead_off) : na
+stock33_close = enable_all and enable_stock33 and ticker33 != "" ? request.security(ticker33, tf, close, lookahead=barmerge.lookahead_off) : na
+stock34_close = enable_all and enable_stock34 and ticker34 != "" ? request.security(ticker34, tf, close, lookahead=barmerge.lookahead_off) : na
+stock35_close = enable_all and enable_stock35 and ticker35 != "" ? request.security(ticker35, tf, close, lookahead=barmerge.lookahead_off) : na
+stock36_close = enable_all and enable_stock36 and ticker36 != "" ? request.security(ticker36, tf, close, lookahead=barmerge.lookahead_off) : na
+stock37_close = enable_all and enable_stock37 and ticker37 != "" ? request.security(ticker37, tf, close, lookahead=barmerge.lookahead_off) : na
+stock38_close = enable_all and enable_stock38 and ticker38 != "" ? request.security(ticker38, tf, close, lookahead=barmerge.lookahead_off) : na
+stock39_close = enable_all and enable_stock39 and ticker39 != "" ? request.security(ticker39, tf, close, lookahead=barmerge.lookahead_off) : na
+stock40_close = enable_all and enable_stock40 and ticker40 != "" ? request.security(ticker40, tf, close, lookahead=barmerge.lookahead_off) : na
+
+// ============================================================================
+// DRAW HORIZONTAL LINES AND LABELS
+// ============================================================================
+if show_all_visual and barstate.islast
+    // Stock 1 - COHR [zone]
+    if show_stock1 and str.contains(syminfo.tickerid, ticker1)
+        l_u1 = line.new(bar_index, upper1, bar_index + line_length, upper1, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        l_l1 = line.new(bar_index, lower1, bar_index + line_length, lower1, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        linefill.new(l_u1, l_l1, color=color.new(buy_color, zone_transparency))
+        if show_labels
+            label.new(bar_index, upper1, "COHR zone ▲ " + str.tostring(upper1), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+            label.new(bar_index, lower1, "COHR zone ▼ " + str.tostring(lower1), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+
+    // Stock 2 - LITE [zone]
+    if show_stock2 and str.contains(syminfo.tickerid, ticker2)
+        l_u2 = line.new(bar_index, upper2, bar_index + line_length, upper2, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        l_l2 = line.new(bar_index, lower2, bar_index + line_length, lower2, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        linefill.new(l_u2, l_l2, color=color.new(buy_color, zone_transparency))
+        if show_labels
+            label.new(bar_index, upper2, "LITE zone ▲ " + str.tostring(upper2), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+            label.new(bar_index, lower2, "LITE zone ▼ " + str.tostring(lower2), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+
+    // Stock 3 - MU [zone]
+    if show_stock3 and str.contains(syminfo.tickerid, ticker3)
+        l_u3 = line.new(bar_index, upper3, bar_index + line_length, upper3, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        l_l3 = line.new(bar_index, lower3, bar_index + line_length, lower3, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        linefill.new(l_u3, l_l3, color=color.new(buy_color, zone_transparency))
+        if show_labels
+            label.new(bar_index, upper3, "MU zone ▲ " + str.tostring(upper3), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+            label.new(bar_index, lower3, "MU zone ▼ " + str.tostring(lower3), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+
+    // Stock 4 - SNDK [zone]
+    if show_stock4 and str.contains(syminfo.tickerid, ticker4)
+        l_u4 = line.new(bar_index, upper4, bar_index + line_length, upper4, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        l_l4 = line.new(bar_index, lower4, bar_index + line_length, lower4, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        linefill.new(l_u4, l_l4, color=color.new(buy_color, zone_transparency))
+        if show_labels
+            label.new(bar_index, upper4, "SNDK zone ▲ " + str.tostring(upper4), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+            label.new(bar_index, lower4, "SNDK zone ▼ " + str.tostring(lower4), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+
+    // Stock 5 - TSM [zone]
+    if show_stock5 and str.contains(syminfo.tickerid, ticker5)
+        l_u5 = line.new(bar_index, upper5, bar_index + line_length, upper5, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        l_l5 = line.new(bar_index, lower5, bar_index + line_length, lower5, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        linefill.new(l_u5, l_l5, color=color.new(buy_color, zone_transparency))
+        if show_labels
+            label.new(bar_index, upper5, "TSM zone ▲ " + str.tostring(upper5), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+            label.new(bar_index, lower5, "TSM zone ▼ " + str.tostring(lower5), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+
+    // Stock 6 - BE [zone]
+    if show_stock6 and str.contains(syminfo.tickerid, ticker6)
+        l_u6 = line.new(bar_index, upper6, bar_index + line_length, upper6, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        l_l6 = line.new(bar_index, lower6, bar_index + line_length, lower6, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        linefill.new(l_u6, l_l6, color=color.new(buy_color, zone_transparency))
+        if show_labels
+            label.new(bar_index, upper6, "BE zone ▲ " + str.tostring(upper6), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+            label.new(bar_index, lower6, "BE zone ▼ " + str.tostring(lower6), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+
+    // Stock 7 - AAOI [zone]
+    if show_stock7 and str.contains(syminfo.tickerid, ticker7)
+        l_u7 = line.new(bar_index, upper7, bar_index + line_length, upper7, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        l_l7 = line.new(bar_index, lower7, bar_index + line_length, lower7, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        linefill.new(l_u7, l_l7, color=color.new(buy_color, zone_transparency))
+        if show_labels
+            label.new(bar_index, upper7, "AAOI zone ▲ " + str.tostring(upper7), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+            label.new(bar_index, lower7, "AAOI zone ▼ " + str.tostring(lower7), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+
+    // Stock 8 - SIMO [zone]
+    if show_stock8 and str.contains(syminfo.tickerid, ticker8)
+        l_u8 = line.new(bar_index, upper8, bar_index + line_length, upper8, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        l_l8 = line.new(bar_index, lower8, bar_index + line_length, lower8, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        linefill.new(l_u8, l_l8, color=color.new(buy_color, zone_transparency))
+        if show_labels
+            label.new(bar_index, upper8, "SIMO zone ▲ " + str.tostring(upper8), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+            label.new(bar_index, lower8, "SIMO zone ▼ " + str.tostring(lower8), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+
+    // Stock 9 - CRDO [zone]
+    if show_stock9 and str.contains(syminfo.tickerid, ticker9)
+        l_u9 = line.new(bar_index, upper9, bar_index + line_length, upper9, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        l_l9 = line.new(bar_index, lower9, bar_index + line_length, lower9, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        linefill.new(l_u9, l_l9, color=color.new(buy_color, zone_transparency))
+        if show_labels
+            label.new(bar_index, upper9, "CRDO zone ▲ " + str.tostring(upper9), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+            label.new(bar_index, lower9, "CRDO zone ▼ " + str.tostring(lower9), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+
+    // Stock 10 - INOD [zone]
+    if show_stock10 and str.contains(syminfo.tickerid, ticker10)
+        l_u10 = line.new(bar_index, upper10, bar_index + line_length, upper10, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        l_l10 = line.new(bar_index, lower10, bar_index + line_length, lower10, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        linefill.new(l_u10, l_l10, color=color.new(buy_color, zone_transparency))
+        if show_labels
+            label.new(bar_index, upper10, "INOD zone ▲ " + str.tostring(upper10), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+            label.new(bar_index, lower10, "INOD zone ▼ " + str.tostring(lower10), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+
+    // Stock 11 - TSLA [level]
+    if show_stock11 and str.contains(syminfo.tickerid, ticker11)
+        line.new(bar_index, level11, bar_index + line_length, level11, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        if show_labels
+            label.new(bar_index, level11, "TSLA ◆ " + str.tostring(level11), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+
+    // Stock 12 - [empty]
+    if show_stock12 and ticker12 != "" and upper12 > 0 and str.contains(syminfo.tickerid, ticker12)
+        l_u12 = line.new(bar_index, upper12, bar_index + line_length, upper12, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        if lower12 > 0 and lower12 != upper12
+            l_l12 = line.new(bar_index, lower12, bar_index + line_length, lower12, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+            linefill.new(l_u12, l_l12, color=color.new(buy_color, zone_transparency))
+        if show_labels
+            label.new(bar_index, upper12, ticker12 + " ▲ " + str.tostring(upper12), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+            if lower12 > 0 and lower12 != upper12
+                label.new(bar_index, lower12, ticker12 + " ▼ " + str.tostring(lower12), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+
+    // Stock 13 - [empty]
+    if show_stock13 and ticker13 != "" and upper13 > 0 and str.contains(syminfo.tickerid, ticker13)
+        l_u13 = line.new(bar_index, upper13, bar_index + line_length, upper13, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        if lower13 > 0 and lower13 != upper13
+            l_l13 = line.new(bar_index, lower13, bar_index + line_length, lower13, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+            linefill.new(l_u13, l_l13, color=color.new(buy_color, zone_transparency))
+        if show_labels
+            label.new(bar_index, upper13, ticker13 + " ▲ " + str.tostring(upper13), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+            if lower13 > 0 and lower13 != upper13
+                label.new(bar_index, lower13, ticker13 + " ▼ " + str.tostring(lower13), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+
+    // Stock 14 - [empty]
+    if show_stock14 and ticker14 != "" and upper14 > 0 and str.contains(syminfo.tickerid, ticker14)
+        l_u14 = line.new(bar_index, upper14, bar_index + line_length, upper14, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        if lower14 > 0 and lower14 != upper14
+            l_l14 = line.new(bar_index, lower14, bar_index + line_length, lower14, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+            linefill.new(l_u14, l_l14, color=color.new(buy_color, zone_transparency))
+        if show_labels
+            label.new(bar_index, upper14, ticker14 + " ▲ " + str.tostring(upper14), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+            if lower14 > 0 and lower14 != upper14
+                label.new(bar_index, lower14, ticker14 + " ▼ " + str.tostring(lower14), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+
+    // Stock 15 - [empty]
+    if show_stock15 and ticker15 != "" and upper15 > 0 and str.contains(syminfo.tickerid, ticker15)
+        l_u15 = line.new(bar_index, upper15, bar_index + line_length, upper15, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        if lower15 > 0 and lower15 != upper15
+            l_l15 = line.new(bar_index, lower15, bar_index + line_length, lower15, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+            linefill.new(l_u15, l_l15, color=color.new(buy_color, zone_transparency))
+        if show_labels
+            label.new(bar_index, upper15, ticker15 + " ▲ " + str.tostring(upper15), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+            if lower15 > 0 and lower15 != upper15
+                label.new(bar_index, lower15, ticker15 + " ▼ " + str.tostring(lower15), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+
+    // Stock 16 - [empty]
+    if show_stock16 and ticker16 != "" and upper16 > 0 and str.contains(syminfo.tickerid, ticker16)
+        l_u16 = line.new(bar_index, upper16, bar_index + line_length, upper16, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        if lower16 > 0 and lower16 != upper16
+            l_l16 = line.new(bar_index, lower16, bar_index + line_length, lower16, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+            linefill.new(l_u16, l_l16, color=color.new(buy_color, zone_transparency))
+        if show_labels
+            label.new(bar_index, upper16, ticker16 + " ▲ " + str.tostring(upper16), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+            if lower16 > 0 and lower16 != upper16
+                label.new(bar_index, lower16, ticker16 + " ▼ " + str.tostring(lower16), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+
+    // Stock 17 - [empty]
+    if show_stock17 and ticker17 != "" and upper17 > 0 and str.contains(syminfo.tickerid, ticker17)
+        l_u17 = line.new(bar_index, upper17, bar_index + line_length, upper17, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        if lower17 > 0 and lower17 != upper17
+            l_l17 = line.new(bar_index, lower17, bar_index + line_length, lower17, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+            linefill.new(l_u17, l_l17, color=color.new(buy_color, zone_transparency))
+        if show_labels
+            label.new(bar_index, upper17, ticker17 + " ▲ " + str.tostring(upper17), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+            if lower17 > 0 and lower17 != upper17
+                label.new(bar_index, lower17, ticker17 + " ▼ " + str.tostring(lower17), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+
+    // Stock 18 - [empty]
+    if show_stock18 and ticker18 != "" and upper18 > 0 and str.contains(syminfo.tickerid, ticker18)
+        l_u18 = line.new(bar_index, upper18, bar_index + line_length, upper18, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        if lower18 > 0 and lower18 != upper18
+            l_l18 = line.new(bar_index, lower18, bar_index + line_length, lower18, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+            linefill.new(l_u18, l_l18, color=color.new(buy_color, zone_transparency))
+        if show_labels
+            label.new(bar_index, upper18, ticker18 + " ▲ " + str.tostring(upper18), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+            if lower18 > 0 and lower18 != upper18
+                label.new(bar_index, lower18, ticker18 + " ▼ " + str.tostring(lower18), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+
+    // Stock 19 - [empty]
+    if show_stock19 and ticker19 != "" and upper19 > 0 and str.contains(syminfo.tickerid, ticker19)
+        l_u19 = line.new(bar_index, upper19, bar_index + line_length, upper19, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        if lower19 > 0 and lower19 != upper19
+            l_l19 = line.new(bar_index, lower19, bar_index + line_length, lower19, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+            linefill.new(l_u19, l_l19, color=color.new(buy_color, zone_transparency))
+        if show_labels
+            label.new(bar_index, upper19, ticker19 + " ▲ " + str.tostring(upper19), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+            if lower19 > 0 and lower19 != upper19
+                label.new(bar_index, lower19, ticker19 + " ▼ " + str.tostring(lower19), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+
+    // Stock 20 - [empty]
+    if show_stock20 and ticker20 != "" and upper20 > 0 and str.contains(syminfo.tickerid, ticker20)
+        l_u20 = line.new(bar_index, upper20, bar_index + line_length, upper20, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        if lower20 > 0 and lower20 != upper20
+            l_l20 = line.new(bar_index, lower20, bar_index + line_length, lower20, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+            linefill.new(l_u20, l_l20, color=color.new(buy_color, zone_transparency))
+        if show_labels
+            label.new(bar_index, upper20, ticker20 + " ▲ " + str.tostring(upper20), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+            if lower20 > 0 and lower20 != upper20
+                label.new(bar_index, lower20, ticker20 + " ▼ " + str.tostring(lower20), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+
+    // Stock 21 - [empty]
+    if show_stock21 and ticker21 != "" and upper21 > 0 and str.contains(syminfo.tickerid, ticker21)
+        l_u21 = line.new(bar_index, upper21, bar_index + line_length, upper21, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        if lower21 > 0 and lower21 != upper21
+            l_l21 = line.new(bar_index, lower21, bar_index + line_length, lower21, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+            linefill.new(l_u21, l_l21, color=color.new(buy_color, zone_transparency))
+        if show_labels
+            label.new(bar_index, upper21, ticker21 + " ▲ " + str.tostring(upper21), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+            if lower21 > 0 and lower21 != upper21
+                label.new(bar_index, lower21, ticker21 + " ▼ " + str.tostring(lower21), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+
+    // Stock 22 - [empty]
+    if show_stock22 and ticker22 != "" and upper22 > 0 and str.contains(syminfo.tickerid, ticker22)
+        l_u22 = line.new(bar_index, upper22, bar_index + line_length, upper22, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        if lower22 > 0 and lower22 != upper22
+            l_l22 = line.new(bar_index, lower22, bar_index + line_length, lower22, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+            linefill.new(l_u22, l_l22, color=color.new(buy_color, zone_transparency))
+        if show_labels
+            label.new(bar_index, upper22, ticker22 + " ▲ " + str.tostring(upper22), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+            if lower22 > 0 and lower22 != upper22
+                label.new(bar_index, lower22, ticker22 + " ▼ " + str.tostring(lower22), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+
+    // Stock 23 - [empty]
+    if show_stock23 and ticker23 != "" and upper23 > 0 and str.contains(syminfo.tickerid, ticker23)
+        l_u23 = line.new(bar_index, upper23, bar_index + line_length, upper23, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        if lower23 > 0 and lower23 != upper23
+            l_l23 = line.new(bar_index, lower23, bar_index + line_length, lower23, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+            linefill.new(l_u23, l_l23, color=color.new(buy_color, zone_transparency))
+        if show_labels
+            label.new(bar_index, upper23, ticker23 + " ▲ " + str.tostring(upper23), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+            if lower23 > 0 and lower23 != upper23
+                label.new(bar_index, lower23, ticker23 + " ▼ " + str.tostring(lower23), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+
+    // Stock 24 - [empty]
+    if show_stock24 and ticker24 != "" and upper24 > 0 and str.contains(syminfo.tickerid, ticker24)
+        l_u24 = line.new(bar_index, upper24, bar_index + line_length, upper24, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        if lower24 > 0 and lower24 != upper24
+            l_l24 = line.new(bar_index, lower24, bar_index + line_length, lower24, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+            linefill.new(l_u24, l_l24, color=color.new(buy_color, zone_transparency))
+        if show_labels
+            label.new(bar_index, upper24, ticker24 + " ▲ " + str.tostring(upper24), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+            if lower24 > 0 and lower24 != upper24
+                label.new(bar_index, lower24, ticker24 + " ▼ " + str.tostring(lower24), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+
+    // Stock 25 - [empty]
+    if show_stock25 and ticker25 != "" and upper25 > 0 and str.contains(syminfo.tickerid, ticker25)
+        l_u25 = line.new(bar_index, upper25, bar_index + line_length, upper25, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        if lower25 > 0 and lower25 != upper25
+            l_l25 = line.new(bar_index, lower25, bar_index + line_length, lower25, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+            linefill.new(l_u25, l_l25, color=color.new(buy_color, zone_transparency))
+        if show_labels
+            label.new(bar_index, upper25, ticker25 + " ▲ " + str.tostring(upper25), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+            if lower25 > 0 and lower25 != upper25
+                label.new(bar_index, lower25, ticker25 + " ▼ " + str.tostring(lower25), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+
+    // Stock 26 - [empty]
+    if show_stock26 and ticker26 != "" and upper26 > 0 and str.contains(syminfo.tickerid, ticker26)
+        l_u26 = line.new(bar_index, upper26, bar_index + line_length, upper26, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        if lower26 > 0 and lower26 != upper26
+            l_l26 = line.new(bar_index, lower26, bar_index + line_length, lower26, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+            linefill.new(l_u26, l_l26, color=color.new(buy_color, zone_transparency))
+        if show_labels
+            label.new(bar_index, upper26, ticker26 + " ▲ " + str.tostring(upper26), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+            if lower26 > 0 and lower26 != upper26
+                label.new(bar_index, lower26, ticker26 + " ▼ " + str.tostring(lower26), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+
+    // Stock 27 - [empty]
+    if show_stock27 and ticker27 != "" and upper27 > 0 and str.contains(syminfo.tickerid, ticker27)
+        l_u27 = line.new(bar_index, upper27, bar_index + line_length, upper27, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        if lower27 > 0 and lower27 != upper27
+            l_l27 = line.new(bar_index, lower27, bar_index + line_length, lower27, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+            linefill.new(l_u27, l_l27, color=color.new(buy_color, zone_transparency))
+        if show_labels
+            label.new(bar_index, upper27, ticker27 + " ▲ " + str.tostring(upper27), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+            if lower27 > 0 and lower27 != upper27
+                label.new(bar_index, lower27, ticker27 + " ▼ " + str.tostring(lower27), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+
+    // Stock 28 - [empty]
+    if show_stock28 and ticker28 != "" and upper28 > 0 and str.contains(syminfo.tickerid, ticker28)
+        l_u28 = line.new(bar_index, upper28, bar_index + line_length, upper28, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        if lower28 > 0 and lower28 != upper28
+            l_l28 = line.new(bar_index, lower28, bar_index + line_length, lower28, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+            linefill.new(l_u28, l_l28, color=color.new(buy_color, zone_transparency))
+        if show_labels
+            label.new(bar_index, upper28, ticker28 + " ▲ " + str.tostring(upper28), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+            if lower28 > 0 and lower28 != upper28
+                label.new(bar_index, lower28, ticker28 + " ▼ " + str.tostring(lower28), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+
+    // Stock 29 - [empty]
+    if show_stock29 and ticker29 != "" and upper29 > 0 and str.contains(syminfo.tickerid, ticker29)
+        l_u29 = line.new(bar_index, upper29, bar_index + line_length, upper29, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        if lower29 > 0 and lower29 != upper29
+            l_l29 = line.new(bar_index, lower29, bar_index + line_length, lower29, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+            linefill.new(l_u29, l_l29, color=color.new(buy_color, zone_transparency))
+        if show_labels
+            label.new(bar_index, upper29, ticker29 + " ▲ " + str.tostring(upper29), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+            if lower29 > 0 and lower29 != upper29
+                label.new(bar_index, lower29, ticker29 + " ▼ " + str.tostring(lower29), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+
+    // Stock 30 - [empty]
+    if show_stock30 and ticker30 != "" and upper30 > 0 and str.contains(syminfo.tickerid, ticker30)
+        l_u30 = line.new(bar_index, upper30, bar_index + line_length, upper30, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        if lower30 > 0 and lower30 != upper30
+            l_l30 = line.new(bar_index, lower30, bar_index + line_length, lower30, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+            linefill.new(l_u30, l_l30, color=color.new(buy_color, zone_transparency))
+        if show_labels
+            label.new(bar_index, upper30, ticker30 + " ▲ " + str.tostring(upper30), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+            if lower30 > 0 and lower30 != upper30
+                label.new(bar_index, lower30, ticker30 + " ▼ " + str.tostring(lower30), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+
+    // Stock 31 - [empty]
+    if show_stock31 and ticker31 != "" and upper31 > 0 and str.contains(syminfo.tickerid, ticker31)
+        l_u31 = line.new(bar_index, upper31, bar_index + line_length, upper31, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        if lower31 > 0 and lower31 != upper31
+            l_l31 = line.new(bar_index, lower31, bar_index + line_length, lower31, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+            linefill.new(l_u31, l_l31, color=color.new(buy_color, zone_transparency))
+        if show_labels
+            label.new(bar_index, upper31, ticker31 + " ▲ " + str.tostring(upper31), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+            if lower31 > 0 and lower31 != upper31
+                label.new(bar_index, lower31, ticker31 + " ▼ " + str.tostring(lower31), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+
+    // Stock 32 - [empty]
+    if show_stock32 and ticker32 != "" and upper32 > 0 and str.contains(syminfo.tickerid, ticker32)
+        l_u32 = line.new(bar_index, upper32, bar_index + line_length, upper32, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        if lower32 > 0 and lower32 != upper32
+            l_l32 = line.new(bar_index, lower32, bar_index + line_length, lower32, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+            linefill.new(l_u32, l_l32, color=color.new(buy_color, zone_transparency))
+        if show_labels
+            label.new(bar_index, upper32, ticker32 + " ▲ " + str.tostring(upper32), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+            if lower32 > 0 and lower32 != upper32
+                label.new(bar_index, lower32, ticker32 + " ▼ " + str.tostring(lower32), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+
+    // Stock 33 - [empty]
+    if show_stock33 and ticker33 != "" and upper33 > 0 and str.contains(syminfo.tickerid, ticker33)
+        l_u33 = line.new(bar_index, upper33, bar_index + line_length, upper33, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        if lower33 > 0 and lower33 != upper33
+            l_l33 = line.new(bar_index, lower33, bar_index + line_length, lower33, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+            linefill.new(l_u33, l_l33, color=color.new(buy_color, zone_transparency))
+        if show_labels
+            label.new(bar_index, upper33, ticker33 + " ▲ " + str.tostring(upper33), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+            if lower33 > 0 and lower33 != upper33
+                label.new(bar_index, lower33, ticker33 + " ▼ " + str.tostring(lower33), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+
+    // Stock 34 - [empty]
+    if show_stock34 and ticker34 != "" and upper34 > 0 and str.contains(syminfo.tickerid, ticker34)
+        l_u34 = line.new(bar_index, upper34, bar_index + line_length, upper34, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        if lower34 > 0 and lower34 != upper34
+            l_l34 = line.new(bar_index, lower34, bar_index + line_length, lower34, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+            linefill.new(l_u34, l_l34, color=color.new(buy_color, zone_transparency))
+        if show_labels
+            label.new(bar_index, upper34, ticker34 + " ▲ " + str.tostring(upper34), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+            if lower34 > 0 and lower34 != upper34
+                label.new(bar_index, lower34, ticker34 + " ▼ " + str.tostring(lower34), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+
+    // Stock 35 - [empty]
+    if show_stock35 and ticker35 != "" and upper35 > 0 and str.contains(syminfo.tickerid, ticker35)
+        l_u35 = line.new(bar_index, upper35, bar_index + line_length, upper35, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        if lower35 > 0 and lower35 != upper35
+            l_l35 = line.new(bar_index, lower35, bar_index + line_length, lower35, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+            linefill.new(l_u35, l_l35, color=color.new(buy_color, zone_transparency))
+        if show_labels
+            label.new(bar_index, upper35, ticker35 + " ▲ " + str.tostring(upper35), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+            if lower35 > 0 and lower35 != upper35
+                label.new(bar_index, lower35, ticker35 + " ▼ " + str.tostring(lower35), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+
+    // Stock 36 - [empty]
+    if show_stock36 and ticker36 != "" and upper36 > 0 and str.contains(syminfo.tickerid, ticker36)
+        l_u36 = line.new(bar_index, upper36, bar_index + line_length, upper36, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        if lower36 > 0 and lower36 != upper36
+            l_l36 = line.new(bar_index, lower36, bar_index + line_length, lower36, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+            linefill.new(l_u36, l_l36, color=color.new(buy_color, zone_transparency))
+        if show_labels
+            label.new(bar_index, upper36, ticker36 + " ▲ " + str.tostring(upper36), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+            if lower36 > 0 and lower36 != upper36
+                label.new(bar_index, lower36, ticker36 + " ▼ " + str.tostring(lower36), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+
+    // Stock 37 - [empty]
+    if show_stock37 and ticker37 != "" and upper37 > 0 and str.contains(syminfo.tickerid, ticker37)
+        l_u37 = line.new(bar_index, upper37, bar_index + line_length, upper37, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        if lower37 > 0 and lower37 != upper37
+            l_l37 = line.new(bar_index, lower37, bar_index + line_length, lower37, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+            linefill.new(l_u37, l_l37, color=color.new(buy_color, zone_transparency))
+        if show_labels
+            label.new(bar_index, upper37, ticker37 + " ▲ " + str.tostring(upper37), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+            if lower37 > 0 and lower37 != upper37
+                label.new(bar_index, lower37, ticker37 + " ▼ " + str.tostring(lower37), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+
+    // Stock 38 - [empty]
+    if show_stock38 and ticker38 != "" and upper38 > 0 and str.contains(syminfo.tickerid, ticker38)
+        l_u38 = line.new(bar_index, upper38, bar_index + line_length, upper38, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        if lower38 > 0 and lower38 != upper38
+            l_l38 = line.new(bar_index, lower38, bar_index + line_length, lower38, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+            linefill.new(l_u38, l_l38, color=color.new(buy_color, zone_transparency))
+        if show_labels
+            label.new(bar_index, upper38, ticker38 + " ▲ " + str.tostring(upper38), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+            if lower38 > 0 and lower38 != upper38
+                label.new(bar_index, lower38, ticker38 + " ▼ " + str.tostring(lower38), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+
+    // Stock 39 - [empty]
+    if show_stock39 and ticker39 != "" and upper39 > 0 and str.contains(syminfo.tickerid, ticker39)
+        l_u39 = line.new(bar_index, upper39, bar_index + line_length, upper39, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        if lower39 > 0 and lower39 != upper39
+            l_l39 = line.new(bar_index, lower39, bar_index + line_length, lower39, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+            linefill.new(l_u39, l_l39, color=color.new(buy_color, zone_transparency))
+        if show_labels
+            label.new(bar_index, upper39, ticker39 + " ▲ " + str.tostring(upper39), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+            if lower39 > 0 and lower39 != upper39
+                label.new(bar_index, lower39, ticker39 + " ▼ " + str.tostring(lower39), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+
+    // Stock 40 - [empty]
+    if show_stock40 and ticker40 != "" and upper40 > 0 and str.contains(syminfo.tickerid, ticker40)
+        l_u40 = line.new(bar_index, upper40, bar_index + line_length, upper40, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+        if lower40 > 0 and lower40 != upper40
+            l_l40 = line.new(bar_index, lower40, bar_index + line_length, lower40, extend=line_extend, color=buy_color, style=line_style, width=line_width)
+            linefill.new(l_u40, l_l40, color=color.new(buy_color, zone_transparency))
+        if show_labels
+            label.new(bar_index, upper40, ticker40 + " ▲ " + str.tostring(upper40), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+            if lower40 > 0 and lower40 != upper40
+                label.new(bar_index, lower40, ticker40 + " ▼ " + str.tostring(lower40), style=label.style_label_left, color=buy_color, textcolor=color.white, size=size.small)
+
+// ============================================================================
+// ALERT CONDITIONS
+// ============================================================================
+// Stock 1 - COHR [zone]
+if enable_all and enable_stock1
+    _entered1 = ta.crossunder(stock1_close, upper1) and not ta.crossunder(stock1_close, lower1)
+    _failed1 = ta.crossunder(stock1_close, lower1)
+    if _entered1
+        alert('{"content":"🟢 BUY ZONE: COHR entered buy zone $' + str.tostring(upper1) + '-$' + str.tostring(lower1) + ' [Timeframe: ' + tf + '] - hfhsghdgs"}', alert.freq_once_per_bar_close)
+    if _failed1
+        alert('{"content":"🔴 ZONE FAILED: COHR broke below $' + str.tostring(lower1) + ' [Timeframe: ' + tf + '] - hfhsghdgs"}', alert.freq_once_per_bar_close)
+
+// Stock 2 - LITE [zone]
+if enable_all and enable_stock2
+    _entered2 = ta.crossunder(stock2_close, upper2) and not ta.crossunder(stock2_close, lower2)
+    _failed2 = ta.crossunder(stock2_close, lower2)
+    if _entered2
+        alert('{"content":"🟢 BUY ZONE: LITE entered buy zone $' + str.tostring(upper2) + '-$' + str.tostring(lower2) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+    if _failed2
+        alert('{"content":"🔴 ZONE FAILED: LITE broke below $' + str.tostring(lower2) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+
+// Stock 3 - MU [zone]
+if enable_all and enable_stock3
+    _entered3 = ta.crossunder(stock3_close, upper3) and not ta.crossunder(stock3_close, lower3)
+    _failed3 = ta.crossunder(stock3_close, lower3)
+    if _entered3
+        alert('{"content":"🟢 BUY ZONE: MU entered buy zone $' + str.tostring(upper3) + '-$' + str.tostring(lower3) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+    if _failed3
+        alert('{"content":"🔴 ZONE FAILED: MU broke below $' + str.tostring(lower3) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+
+// Stock 4 - SNDK [zone]
+if enable_all and enable_stock4
+    _entered4 = ta.crossunder(stock4_close, upper4) and not ta.crossunder(stock4_close, lower4)
+    _failed4 = ta.crossunder(stock4_close, lower4)
+    if _entered4
+        alert('{"content":"🟢 BUY ZONE: SNDK entered buy zone $' + str.tostring(upper4) + '-$' + str.tostring(lower4) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+    if _failed4
+        alert('{"content":"🔴 ZONE FAILED: SNDK broke below $' + str.tostring(lower4) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+
+// Stock 5 - TSM [zone]
+if enable_all and enable_stock5
+    _entered5 = ta.crossunder(stock5_close, upper5) and not ta.crossunder(stock5_close, lower5)
+    _failed5 = ta.crossunder(stock5_close, lower5)
+    if _entered5
+        alert('{"content":"🟢 BUY ZONE: TSM entered buy zone $' + str.tostring(upper5) + '-$' + str.tostring(lower5) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+    if _failed5
+        alert('{"content":"🔴 ZONE FAILED: TSM broke below $' + str.tostring(lower5) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+
+// Stock 6 - BE [zone]
+if enable_all and enable_stock6
+    _entered6 = ta.crossunder(stock6_close, upper6) and not ta.crossunder(stock6_close, lower6)
+    _failed6 = ta.crossunder(stock6_close, lower6)
+    if _entered6
+        alert('{"content":"🟢 BUY ZONE: BE entered buy zone $' + str.tostring(upper6) + '-$' + str.tostring(lower6) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+    if _failed6
+        alert('{"content":"🔴 ZONE FAILED: BE broke below $' + str.tostring(lower6) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+
+// Stock 7 - AAOI [zone]
+if enable_all and enable_stock7
+    _entered7 = ta.crossunder(stock7_close, upper7) and not ta.crossunder(stock7_close, lower7)
+    _failed7 = ta.crossunder(stock7_close, lower7)
+    if _entered7
+        alert('{"content":"🟢 BUY ZONE: AAOI entered buy zone $' + str.tostring(upper7) + '-$' + str.tostring(lower7) + ' [Timeframe: ' + tf + '] - optical"}', alert.freq_once_per_bar_close)
+    if _failed7
+        alert('{"content":"🔴 ZONE FAILED: AAOI broke below $' + str.tostring(lower7) + ' [Timeframe: ' + tf + '] - optical"}', alert.freq_once_per_bar_close)
+
+// Stock 8 - SIMO [zone]
+if enable_all and enable_stock8
+    _entered8 = ta.crossunder(stock8_close, upper8) and not ta.crossunder(stock8_close, lower8)
+    _failed8 = ta.crossunder(stock8_close, lower8)
+    if _entered8
+        alert('{"content":"🟢 BUY ZONE: SIMO entered buy zone $' + str.tostring(upper8) + '-$' + str.tostring(lower8) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+    if _failed8
+        alert('{"content":"🔴 ZONE FAILED: SIMO broke below $' + str.tostring(lower8) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+
+// Stock 9 - CRDO [zone]
+if enable_all and enable_stock9
+    _entered9 = ta.crossunder(stock9_close, upper9) and not ta.crossunder(stock9_close, lower9)
+    _failed9 = ta.crossunder(stock9_close, lower9)
+    if _entered9
+        alert('{"content":"🟢 BUY ZONE: CRDO entered buy zone $' + str.tostring(upper9) + '-$' + str.tostring(lower9) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+    if _failed9
+        alert('{"content":"🔴 ZONE FAILED: CRDO broke below $' + str.tostring(lower9) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+
+// Stock 10 - INOD [zone]
+if enable_all and enable_stock10
+    _entered10 = ta.crossunder(stock10_close, upper10) and not ta.crossunder(stock10_close, lower10)
+    _failed10 = ta.crossunder(stock10_close, lower10)
+    if _entered10
+        alert('{"content":"🟢 BUY ZONE: INOD entered buy zone $' + str.tostring(upper10) + '-$' + str.tostring(lower10) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+    if _failed10
+        alert('{"content":"🔴 ZONE FAILED: INOD broke below $' + str.tostring(lower10) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+
+// Stock 11 - TSLA [level]
+if enable_all and enable_stock11 and ta.crossover(stock11_close, level11)
+    alert('{"content":"🟢 BUY LEVEL: TSLA reached $' + str.tostring(level11) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+
+// Stock 12 - [empty]
+if enable_all and enable_stock12 and ticker12 != ""
+    _entered12 = ta.crossunder(stock12_close, upper12) and not ta.crossunder(stock12_close, lower12)
+    _failed12 = lower12 > 0 and lower12 != upper12 and ta.crossunder(stock12_close, lower12)
+    if _entered12
+        alert('{"content":"🟢 BUY ZONE: ' + ticker12 + ' entered buy zone $' + str.tostring(upper12) + '-$' + str.tostring(lower12) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+    if _failed12
+        alert('{"content":"🔴 ZONE FAILED: ' + ticker12 + ' broke below $' + str.tostring(lower12) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+
+// Stock 13 - [empty]
+if enable_all and enable_stock13 and ticker13 != ""
+    _entered13 = ta.crossunder(stock13_close, upper13) and not ta.crossunder(stock13_close, lower13)
+    _failed13 = lower13 > 0 and lower13 != upper13 and ta.crossunder(stock13_close, lower13)
+    if _entered13
+        alert('{"content":"🟢 BUY ZONE: ' + ticker13 + ' entered buy zone $' + str.tostring(upper13) + '-$' + str.tostring(lower13) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+    if _failed13
+        alert('{"content":"🔴 ZONE FAILED: ' + ticker13 + ' broke below $' + str.tostring(lower13) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+
+// Stock 14 - [empty]
+if enable_all and enable_stock14 and ticker14 != ""
+    _entered14 = ta.crossunder(stock14_close, upper14) and not ta.crossunder(stock14_close, lower14)
+    _failed14 = lower14 > 0 and lower14 != upper14 and ta.crossunder(stock14_close, lower14)
+    if _entered14
+        alert('{"content":"🟢 BUY ZONE: ' + ticker14 + ' entered buy zone $' + str.tostring(upper14) + '-$' + str.tostring(lower14) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+    if _failed14
+        alert('{"content":"🔴 ZONE FAILED: ' + ticker14 + ' broke below $' + str.tostring(lower14) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+
+// Stock 15 - [empty]
+if enable_all and enable_stock15 and ticker15 != ""
+    _entered15 = ta.crossunder(stock15_close, upper15) and not ta.crossunder(stock15_close, lower15)
+    _failed15 = lower15 > 0 and lower15 != upper15 and ta.crossunder(stock15_close, lower15)
+    if _entered15
+        alert('{"content":"🟢 BUY ZONE: ' + ticker15 + ' entered buy zone $' + str.tostring(upper15) + '-$' + str.tostring(lower15) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+    if _failed15
+        alert('{"content":"🔴 ZONE FAILED: ' + ticker15 + ' broke below $' + str.tostring(lower15) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+
+// Stock 16 - [empty]
+if enable_all and enable_stock16 and ticker16 != ""
+    _entered16 = ta.crossunder(stock16_close, upper16) and not ta.crossunder(stock16_close, lower16)
+    _failed16 = lower16 > 0 and lower16 != upper16 and ta.crossunder(stock16_close, lower16)
+    if _entered16
+        alert('{"content":"🟢 BUY ZONE: ' + ticker16 + ' entered buy zone $' + str.tostring(upper16) + '-$' + str.tostring(lower16) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+    if _failed16
+        alert('{"content":"🔴 ZONE FAILED: ' + ticker16 + ' broke below $' + str.tostring(lower16) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+
+// Stock 17 - [empty]
+if enable_all and enable_stock17 and ticker17 != ""
+    _entered17 = ta.crossunder(stock17_close, upper17) and not ta.crossunder(stock17_close, lower17)
+    _failed17 = lower17 > 0 and lower17 != upper17 and ta.crossunder(stock17_close, lower17)
+    if _entered17
+        alert('{"content":"🟢 BUY ZONE: ' + ticker17 + ' entered buy zone $' + str.tostring(upper17) + '-$' + str.tostring(lower17) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+    if _failed17
+        alert('{"content":"🔴 ZONE FAILED: ' + ticker17 + ' broke below $' + str.tostring(lower17) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+
+// Stock 18 - [empty]
+if enable_all and enable_stock18 and ticker18 != ""
+    _entered18 = ta.crossunder(stock18_close, upper18) and not ta.crossunder(stock18_close, lower18)
+    _failed18 = lower18 > 0 and lower18 != upper18 and ta.crossunder(stock18_close, lower18)
+    if _entered18
+        alert('{"content":"🟢 BUY ZONE: ' + ticker18 + ' entered buy zone $' + str.tostring(upper18) + '-$' + str.tostring(lower18) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+    if _failed18
+        alert('{"content":"🔴 ZONE FAILED: ' + ticker18 + ' broke below $' + str.tostring(lower18) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+
+// Stock 19 - [empty]
+if enable_all and enable_stock19 and ticker19 != ""
+    _entered19 = ta.crossunder(stock19_close, upper19) and not ta.crossunder(stock19_close, lower19)
+    _failed19 = lower19 > 0 and lower19 != upper19 and ta.crossunder(stock19_close, lower19)
+    if _entered19
+        alert('{"content":"🟢 BUY ZONE: ' + ticker19 + ' entered buy zone $' + str.tostring(upper19) + '-$' + str.tostring(lower19) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+    if _failed19
+        alert('{"content":"🔴 ZONE FAILED: ' + ticker19 + ' broke below $' + str.tostring(lower19) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+
+// Stock 20 - [empty]
+if enable_all and enable_stock20 and ticker20 != ""
+    _entered20 = ta.crossunder(stock20_close, upper20) and not ta.crossunder(stock20_close, lower20)
+    _failed20 = lower20 > 0 and lower20 != upper20 and ta.crossunder(stock20_close, lower20)
+    if _entered20
+        alert('{"content":"🟢 BUY ZONE: ' + ticker20 + ' entered buy zone $' + str.tostring(upper20) + '-$' + str.tostring(lower20) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+    if _failed20
+        alert('{"content":"🔴 ZONE FAILED: ' + ticker20 + ' broke below $' + str.tostring(lower20) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+
+// Stock 21 - [empty]
+if enable_all and enable_stock21 and ticker21 != ""
+    _entered21 = ta.crossunder(stock21_close, upper21) and not ta.crossunder(stock21_close, lower21)
+    _failed21 = lower21 > 0 and lower21 != upper21 and ta.crossunder(stock21_close, lower21)
+    if _entered21
+        alert('{"content":"🟢 BUY ZONE: ' + ticker21 + ' entered buy zone $' + str.tostring(upper21) + '-$' + str.tostring(lower21) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+    if _failed21
+        alert('{"content":"🔴 ZONE FAILED: ' + ticker21 + ' broke below $' + str.tostring(lower21) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+
+// Stock 22 - [empty]
+if enable_all and enable_stock22 and ticker22 != ""
+    _entered22 = ta.crossunder(stock22_close, upper22) and not ta.crossunder(stock22_close, lower22)
+    _failed22 = lower22 > 0 and lower22 != upper22 and ta.crossunder(stock22_close, lower22)
+    if _entered22
+        alert('{"content":"🟢 BUY ZONE: ' + ticker22 + ' entered buy zone $' + str.tostring(upper22) + '-$' + str.tostring(lower22) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+    if _failed22
+        alert('{"content":"🔴 ZONE FAILED: ' + ticker22 + ' broke below $' + str.tostring(lower22) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+
+// Stock 23 - [empty]
+if enable_all and enable_stock23 and ticker23 != ""
+    _entered23 = ta.crossunder(stock23_close, upper23) and not ta.crossunder(stock23_close, lower23)
+    _failed23 = lower23 > 0 and lower23 != upper23 and ta.crossunder(stock23_close, lower23)
+    if _entered23
+        alert('{"content":"🟢 BUY ZONE: ' + ticker23 + ' entered buy zone $' + str.tostring(upper23) + '-$' + str.tostring(lower23) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+    if _failed23
+        alert('{"content":"🔴 ZONE FAILED: ' + ticker23 + ' broke below $' + str.tostring(lower23) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+
+// Stock 24 - [empty]
+if enable_all and enable_stock24 and ticker24 != ""
+    _entered24 = ta.crossunder(stock24_close, upper24) and not ta.crossunder(stock24_close, lower24)
+    _failed24 = lower24 > 0 and lower24 != upper24 and ta.crossunder(stock24_close, lower24)
+    if _entered24
+        alert('{"content":"🟢 BUY ZONE: ' + ticker24 + ' entered buy zone $' + str.tostring(upper24) + '-$' + str.tostring(lower24) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+    if _failed24
+        alert('{"content":"🔴 ZONE FAILED: ' + ticker24 + ' broke below $' + str.tostring(lower24) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+
+// Stock 25 - [empty]
+if enable_all and enable_stock25 and ticker25 != ""
+    _entered25 = ta.crossunder(stock25_close, upper25) and not ta.crossunder(stock25_close, lower25)
+    _failed25 = lower25 > 0 and lower25 != upper25 and ta.crossunder(stock25_close, lower25)
+    if _entered25
+        alert('{"content":"🟢 BUY ZONE: ' + ticker25 + ' entered buy zone $' + str.tostring(upper25) + '-$' + str.tostring(lower25) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+    if _failed25
+        alert('{"content":"🔴 ZONE FAILED: ' + ticker25 + ' broke below $' + str.tostring(lower25) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+
+// Stock 26 - [empty]
+if enable_all and enable_stock26 and ticker26 != ""
+    _entered26 = ta.crossunder(stock26_close, upper26) and not ta.crossunder(stock26_close, lower26)
+    _failed26 = lower26 > 0 and lower26 != upper26 and ta.crossunder(stock26_close, lower26)
+    if _entered26
+        alert('{"content":"🟢 BUY ZONE: ' + ticker26 + ' entered buy zone $' + str.tostring(upper26) + '-$' + str.tostring(lower26) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+    if _failed26
+        alert('{"content":"🔴 ZONE FAILED: ' + ticker26 + ' broke below $' + str.tostring(lower26) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+
+// Stock 27 - [empty]
+if enable_all and enable_stock27 and ticker27 != ""
+    _entered27 = ta.crossunder(stock27_close, upper27) and not ta.crossunder(stock27_close, lower27)
+    _failed27 = lower27 > 0 and lower27 != upper27 and ta.crossunder(stock27_close, lower27)
+    if _entered27
+        alert('{"content":"🟢 BUY ZONE: ' + ticker27 + ' entered buy zone $' + str.tostring(upper27) + '-$' + str.tostring(lower27) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+    if _failed27
+        alert('{"content":"🔴 ZONE FAILED: ' + ticker27 + ' broke below $' + str.tostring(lower27) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+
+// Stock 28 - [empty]
+if enable_all and enable_stock28 and ticker28 != ""
+    _entered28 = ta.crossunder(stock28_close, upper28) and not ta.crossunder(stock28_close, lower28)
+    _failed28 = lower28 > 0 and lower28 != upper28 and ta.crossunder(stock28_close, lower28)
+    if _entered28
+        alert('{"content":"🟢 BUY ZONE: ' + ticker28 + ' entered buy zone $' + str.tostring(upper28) + '-$' + str.tostring(lower28) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+    if _failed28
+        alert('{"content":"🔴 ZONE FAILED: ' + ticker28 + ' broke below $' + str.tostring(lower28) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+
+// Stock 29 - [empty]
+if enable_all and enable_stock29 and ticker29 != ""
+    _entered29 = ta.crossunder(stock29_close, upper29) and not ta.crossunder(stock29_close, lower29)
+    _failed29 = lower29 > 0 and lower29 != upper29 and ta.crossunder(stock29_close, lower29)
+    if _entered29
+        alert('{"content":"🟢 BUY ZONE: ' + ticker29 + ' entered buy zone $' + str.tostring(upper29) + '-$' + str.tostring(lower29) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+    if _failed29
+        alert('{"content":"🔴 ZONE FAILED: ' + ticker29 + ' broke below $' + str.tostring(lower29) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+
+// Stock 30 - [empty]
+if enable_all and enable_stock30 and ticker30 != ""
+    _entered30 = ta.crossunder(stock30_close, upper30) and not ta.crossunder(stock30_close, lower30)
+    _failed30 = lower30 > 0 and lower30 != upper30 and ta.crossunder(stock30_close, lower30)
+    if _entered30
+        alert('{"content":"🟢 BUY ZONE: ' + ticker30 + ' entered buy zone $' + str.tostring(upper30) + '-$' + str.tostring(lower30) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+    if _failed30
+        alert('{"content":"🔴 ZONE FAILED: ' + ticker30 + ' broke below $' + str.tostring(lower30) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+
+// Stock 31 - [empty]
+if enable_all and enable_stock31 and ticker31 != ""
+    _entered31 = ta.crossunder(stock31_close, upper31) and not ta.crossunder(stock31_close, lower31)
+    _failed31 = lower31 > 0 and lower31 != upper31 and ta.crossunder(stock31_close, lower31)
+    if _entered31
+        alert('{"content":"🟢 BUY ZONE: ' + ticker31 + ' entered buy zone $' + str.tostring(upper31) + '-$' + str.tostring(lower31) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+    if _failed31
+        alert('{"content":"🔴 ZONE FAILED: ' + ticker31 + ' broke below $' + str.tostring(lower31) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+
+// Stock 32 - [empty]
+if enable_all and enable_stock32 and ticker32 != ""
+    _entered32 = ta.crossunder(stock32_close, upper32) and not ta.crossunder(stock32_close, lower32)
+    _failed32 = lower32 > 0 and lower32 != upper32 and ta.crossunder(stock32_close, lower32)
+    if _entered32
+        alert('{"content":"🟢 BUY ZONE: ' + ticker32 + ' entered buy zone $' + str.tostring(upper32) + '-$' + str.tostring(lower32) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+    if _failed32
+        alert('{"content":"🔴 ZONE FAILED: ' + ticker32 + ' broke below $' + str.tostring(lower32) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+
+// Stock 33 - [empty]
+if enable_all and enable_stock33 and ticker33 != ""
+    _entered33 = ta.crossunder(stock33_close, upper33) and not ta.crossunder(stock33_close, lower33)
+    _failed33 = lower33 > 0 and lower33 != upper33 and ta.crossunder(stock33_close, lower33)
+    if _entered33
+        alert('{"content":"🟢 BUY ZONE: ' + ticker33 + ' entered buy zone $' + str.tostring(upper33) + '-$' + str.tostring(lower33) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+    if _failed33
+        alert('{"content":"🔴 ZONE FAILED: ' + ticker33 + ' broke below $' + str.tostring(lower33) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+
+// Stock 34 - [empty]
+if enable_all and enable_stock34 and ticker34 != ""
+    _entered34 = ta.crossunder(stock34_close, upper34) and not ta.crossunder(stock34_close, lower34)
+    _failed34 = lower34 > 0 and lower34 != upper34 and ta.crossunder(stock34_close, lower34)
+    if _entered34
+        alert('{"content":"🟢 BUY ZONE: ' + ticker34 + ' entered buy zone $' + str.tostring(upper34) + '-$' + str.tostring(lower34) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+    if _failed34
+        alert('{"content":"🔴 ZONE FAILED: ' + ticker34 + ' broke below $' + str.tostring(lower34) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+
+// Stock 35 - [empty]
+if enable_all and enable_stock35 and ticker35 != ""
+    _entered35 = ta.crossunder(stock35_close, upper35) and not ta.crossunder(stock35_close, lower35)
+    _failed35 = lower35 > 0 and lower35 != upper35 and ta.crossunder(stock35_close, lower35)
+    if _entered35
+        alert('{"content":"🟢 BUY ZONE: ' + ticker35 + ' entered buy zone $' + str.tostring(upper35) + '-$' + str.tostring(lower35) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+    if _failed35
+        alert('{"content":"🔴 ZONE FAILED: ' + ticker35 + ' broke below $' + str.tostring(lower35) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+
+// Stock 36 - [empty]
+if enable_all and enable_stock36 and ticker36 != ""
+    _entered36 = ta.crossunder(stock36_close, upper36) and not ta.crossunder(stock36_close, lower36)
+    _failed36 = lower36 > 0 and lower36 != upper36 and ta.crossunder(stock36_close, lower36)
+    if _entered36
+        alert('{"content":"🟢 BUY ZONE: ' + ticker36 + ' entered buy zone $' + str.tostring(upper36) + '-$' + str.tostring(lower36) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+    if _failed36
+        alert('{"content":"🔴 ZONE FAILED: ' + ticker36 + ' broke below $' + str.tostring(lower36) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+
+// Stock 37 - [empty]
+if enable_all and enable_stock37 and ticker37 != ""
+    _entered37 = ta.crossunder(stock37_close, upper37) and not ta.crossunder(stock37_close, lower37)
+    _failed37 = lower37 > 0 and lower37 != upper37 and ta.crossunder(stock37_close, lower37)
+    if _entered37
+        alert('{"content":"🟢 BUY ZONE: ' + ticker37 + ' entered buy zone $' + str.tostring(upper37) + '-$' + str.tostring(lower37) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+    if _failed37
+        alert('{"content":"🔴 ZONE FAILED: ' + ticker37 + ' broke below $' + str.tostring(lower37) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+
+// Stock 38 - [empty]
+if enable_all and enable_stock38 and ticker38 != ""
+    _entered38 = ta.crossunder(stock38_close, upper38) and not ta.crossunder(stock38_close, lower38)
+    _failed38 = lower38 > 0 and lower38 != upper38 and ta.crossunder(stock38_close, lower38)
+    if _entered38
+        alert('{"content":"🟢 BUY ZONE: ' + ticker38 + ' entered buy zone $' + str.tostring(upper38) + '-$' + str.tostring(lower38) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+    if _failed38
+        alert('{"content":"🔴 ZONE FAILED: ' + ticker38 + ' broke below $' + str.tostring(lower38) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+
+// Stock 39 - [empty]
+if enable_all and enable_stock39 and ticker39 != ""
+    _entered39 = ta.crossunder(stock39_close, upper39) and not ta.crossunder(stock39_close, lower39)
+    _failed39 = lower39 > 0 and lower39 != upper39 and ta.crossunder(stock39_close, lower39)
+    if _entered39
+        alert('{"content":"🟢 BUY ZONE: ' + ticker39 + ' entered buy zone $' + str.tostring(upper39) + '-$' + str.tostring(lower39) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+    if _failed39
+        alert('{"content":"🔴 ZONE FAILED: ' + ticker39 + ' broke below $' + str.tostring(lower39) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+
+// Stock 40 - [empty]
+if enable_all and enable_stock40 and ticker40 != ""
+    _entered40 = ta.crossunder(stock40_close, upper40) and not ta.crossunder(stock40_close, lower40)
+    _failed40 = lower40 > 0 and lower40 != upper40 and ta.crossunder(stock40_close, lower40)
+    if _entered40
+        alert('{"content":"🟢 BUY ZONE: ' + ticker40 + ' entered buy zone $' + str.tostring(upper40) + '-$' + str.tostring(lower40) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+    if _failed40
+        alert('{"content":"🔴 ZONE FAILED: ' + ticker40 + ' broke below $' + str.tostring(lower40) + ' [Timeframe: ' + tf + ']"}', alert.freq_once_per_bar_close)
+
