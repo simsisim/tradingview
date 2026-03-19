@@ -1,0 +1,17 @@
+//@version=5
+indicator("io_Daily MAs on Intraday Charts", shorttitle="io_Daily MAs on Intraday Charts", overlay=true)
+
+// Plot the SMAs/EMAs - D for Daily - sma/ema - close - period - width & color
+plot(request.security(syminfo.tickerid, 'D', ta.ema(high, 4)), linewidth=2, color=color.white, title='4D EMA HIGH')
+plot(request.security(syminfo.tickerid, 'D', ta.ema(close, 5)), linewidth=2, color=color.teal, title='5D EMA')
+plot(request.security(syminfo.tickerid, 'D', ta.ema(close, 10)), linewidth=2, color=color.red, title='10D EMA')
+plot(request.security(syminfo.tickerid, 'D', ta.ema(close, 21)), linewidth=2, color=color.blue, title='21D EMA')
+plot(request.security(syminfo.tickerid, 'D', ta.sma(close, 20)), linewidth=2, color=color.yellow, title='20D SMA')
+plot(request.security(syminfo.tickerid, 'D', ta.sma(close, 50)), linewidth=3, color=color.green, title='50D SMA')
+plot(request.security(syminfo.tickerid, 'D', ta.sma(close, 150)), linewidth=3, color=color.aqua, title='150D SMA')
+plot(request.security(syminfo.tickerid, 'D', ta.sma(close, 200)), linewidth=3, color = color.orange, title='200D SMA')  
+
+plot(request.security(syminfo.tickerid, 'W', ta.sma(close, 10)), linewidth=3, color=color.green, title='10W SMA')
+plot(request.security(syminfo.tickerid, 'W', ta.sma(close, 50)), linewidth=3, color = color.aqua, title='30W SMA')
+// New 65-minute 21 EMA (added below existing plots)
+plot(request.security(syminfo.tickerid, '65', ta.ema(close, 21)), linewidth=2, color=color.purple, title='65m 21 EMA')
