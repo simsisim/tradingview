@@ -21,6 +21,7 @@ REMX,Rare Earth and Strategic Metals,Materials,-0.230895527185002,0.411707793856
 SLV,Silver Miners,Materials,-0.311250177025666,0.647413369580073,1,Materials & Mining
 SLX,Metal Fabrication/ Steel,Materials,-0.21435042427207,0.406515011424367,1,Materials & Mining
 XLB,Chemicals: Major Diversified,Other,-0.206298102699701,0.311775262432315,1,Materials & Mining
+XME,Metals and Mining,Materials,-0.21435042427207,0.406515011424367,1,Materials & Mining
 CARZ,Auto Parts: OEM,Other,-0.0427718881653303,-0.0165088532010587,2,Utilities & Infrastructure
 COAL,Coal,Energy,-0.0427718881653303,-0.0165088532010588,2,Utilities & Infrastructure
 DBA,Agricultural Commodities/Milling,Other,-0.0744135291470608,0.0305672514225647,2,Utilities & Infrastructure
@@ -46,6 +47,7 @@ XLU,Electric Utilities,Other,-0.0629195984152782,-0.0279927573210468,2,Utilities
 XLY,Miscellaneous,Other,-0.0427718881653303,-0.0165088532010589,2,Utilities & Infrastructure
 XRX,Office Equipment/Supplies,Other,-0.0578985599858069,-0.0248148396989483,2,Utilities & Infrastructure
 XSD,Computer Processing Hardware,Technology,-0.0347085793295124,-0.0249864717648872,2,Utilities & Infrastructure
+XTL,Telecom,Technology,-0.0704827995596924,-0.0263796418565067,2,Utilities & Infrastructure
 CIBR,Cybersecurity,Technology,0.439001165745882,0.0607068791566074,3,Energy & Power
 FDN,Internet Software/Services,Technology,0.536904892582328,0.0363736299706427,3,Energy & Power
 IBOT,Robotics ETF,Other,0.456827717093454,0.014544846477298,3,Energy & Power
@@ -57,6 +59,8 @@ SMHX,Fabless Semis,Technology,0.40259419776119,0.0565685419531709,3,Energy & Pow
 SOXX,Semiconductors,Technology,0.781604794298083,0.113553810377812,3,Energy & Power
 KWEB,China Internet,Technology,0.676014635124792,0.094313683062949,3,Energy & Power
 FDN,Internet-Fang,Technology,0.514884276684332,0.0705172150322325,3,Energy & Power
+ROBO,Robotics ETF,Technology,0.456827717093454,0.014544846477298,3,Energy & Power
+BLOK,Crypto,Crypto,0.781604794298083,0.113553810377812,3,Energy & Power
 IBB,Biotechnology,Healthcare,0.540235568085143,0.0610565534645435,4,Consumer & Retail
 IBRN,Neuroscience Heathcare Demographic,Other,-0.00357264628297557,-0.0232614778929207,4,Consumer & Retail
 IHI,Medical Devices,Healthcare,0.00940632590103832,-0.0230906546974979,4,Consumer & Retail
@@ -84,3 +88,4 @@ JETS,Airlines,Industrials,-0.092341958036403,0.0189637136399958,7,Industrial & A
 PKB,Construction Materials,Industrials,-0.218983100775003,0.355470544897819,7,Industrial & Aerospace
 SEA,Marine Shipping,Other,-0.0923419580364031,0.0189637136399958,7,Industrial & Aerospace
 XTN,Air Freight/Couriers,Industrials,-0.0810551234045178,0.00619976014886864,7,Industrial & Aerospace
+XAR,Aerospace & Defense,Industry,-0.0852972434646748,0.0108719490432773,7,Industrial & Aerospace

@@ -72,6 +72,10 @@ show_1w = input.bool(true, '1 Week Return',
      group=gMulti,
      tooltip='Display 1-week (5 trading days) return')
 
+show_1d = input.bool(true, '1 Day Return',
+     group=gMulti,
+     tooltip='Display 1-day (1 trading day) return')
+
 show_custom = input.bool(true, 'Custom Period Return',
      group=gMulti,
      tooltip='Display custom period return when Custom Days is selected')
@@ -143,6 +147,10 @@ show_rr_1m = input.bool(true, 'Rel Return 1 Month',
 show_rr_1w = input.bool(true, 'Rel Return 1 Week',
      group=gRel,
      tooltip='Display Relative Return for 1-week')
+
+show_rr_1d = input.bool(true, 'Rel Return 1 Day',
+     group=gRel,
+     tooltip='Display Relative Return for 1-day')
 
 // ---- Return Calculation Functions ----
 
@@ -218,6 +226,7 @@ bars_6m = 126
 bars_3m = 63
 bars_1m = 21
 bars_1w = 5
+bars_1d = 1
 
 return_1y = _calc_return(close, bars_1y)
 return_ytd = _calc_return(close, bars_ytd)
@@ -225,6 +234,7 @@ return_6m = _calc_return(close, bars_6m)
 return_3m = _calc_return(close, bars_3m)
 return_1m = _calc_return(close, bars_1m)
 return_1w = _calc_return(close, bars_1w)
+return_1d = _calc_return(close, bars_1d)
 
 // ---- RS Rating Calculation ----
 // Fetch benchmark data ONCE for all RS calculations (1 request.security call total)
@@ -251,6 +261,7 @@ rr_6m = _calc_return(ratio_series, bars_6m)
 rr_3m = _calc_return(ratio_series, bars_3m)
 rr_1m = _calc_return(ratio_series, bars_1m)
 rr_1w = _calc_return(ratio_series, bars_1w)
+rr_1d = _calc_return(ratio_series, bars_1d)
 
 // ---- Plot Outputs (Screener Columns) ----
 
@@ -262,6 +273,10 @@ plot(primary_return,
 // Multi-period plots (always shown)
 plot(return_1w,
      title='1W Return %',
+     display=display.all)
+
+plot(return_1d,
+     title='1D Return %',
      display=display.all)
 
 plot(return_1m,
@@ -319,6 +334,10 @@ plot(rr_1w,
      title='Rel Return 1W %',
      display=display.all)
 
+plot(rr_1d,
+     title='Rel Return 1D %',
+     display=display.all)
+
 plot(rr_1m,
      title='Rel Return 1M %',
      display=display.all)
@@ -361,10 +380,11 @@ if barstate.islast
     val_rr_3m = nz(rr_3m, 0)
     val_rr_1m = nz(rr_1m, 0)
     val_rr_1w = nz(rr_1w, 0)
-    
-    rr_text = show_rel_return ? str.format('\n\nRel Returns:\n1Y: {0,number,#.##}%\nYTD: {1,number,#.##}%\n6M: {2,number,#.##}%\n3M: {3,number,#.##}%\n1M: {4,number,#.##}%\n1W: {5,number,#.##}%', val_rr_1y, val_rr_ytd, val_rr_6m, val_rr_3m, val_rr_1m, val_rr_1w) : ''
-    
-    label_text = show_multiple ? str.format('Returns:\n1Y: {0,number,#.##}%\nYTD: {1,number,#.##}%\n6M: {2,number,#.##}%\n3M: {3,number,#.##}%\n1M: {4,number,#.##}%\n1W: {5,number,#.##}%{6}{7}', return_1y, return_ytd, return_6m, return_3m, return_1m, return_1w, rs_text, rr_text) : str.format('{0}: {1,number,#.##}%{2}{3}', primary_period, primary_return, rs_text, rr_text)
+    val_rr_1d = nz(rr_1d, 0)
+
+    rr_text = show_rel_return ? str.format('\n\nRel Returns:\n1Y: {0,number,#.##}%\nYTD: {1,number,#.##}%\n6M: {2,number,#.##}%\n3M: {3,number,#.##}%\n1M: {4,number,#.##}%\n1W: {5,number,#.##}%\n1D: {6,number,#.##}%', val_rr_1y, val_rr_ytd, val_rr_6m, val_rr_3m, val_rr_1m, val_rr_1w, val_rr_1d) : ''
+
+    label_text = show_multiple ? str.format('Returns:\n1Y: {0,number,#.##}%\nYTD: {1,number,#.##}%\n6M: {2,number,#.##}%\n3M: {3,number,#.##}%\n1M: {4,number,#.##}%\n1W: {5,number,#.##}%\n1D: {6,number,#.##}%{7}{8}', return_1y, return_ytd, return_6m, return_3m, return_1m, return_1w, return_1d, rs_text, rr_text) : str.format('{0}: {1,number,#.##}%{2}{3}', primary_period, primary_return, rs_text, rr_text)
 
     info_label := label.new(
          bar_index, high,

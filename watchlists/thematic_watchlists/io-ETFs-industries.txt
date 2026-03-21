@@ -1,16 +1,16 @@
 ### Financials & Insurance
 IAK
-IHF
-IYF
-KBE
 SPY
 VGT
 XLF
-KBWB
-KIE
 KRE
+KIE
 PBS
+KBWB
 PHO
+IHF
+KBE
+IYF
 ### Materials & Mining
 AA
 EMET
@@ -22,9 +22,10 @@ REMX
 SLV
 SLX
 XLB
+XME
 ### Utilities & Infrastructure
 IYT
-IYZ
+COAL
 DBA
 FIW
 FSTA
@@ -32,8 +33,6 @@ HACK
 IGM
 ITB
 CARZ
-COAL
-VOX
 VNQ
 VEGI
 PSCI
@@ -41,52 +40,58 @@ PEJ
 PAVE
 OIH
 JEDI
+IYZ
 XSD
 XRX
 XLY
 XLU
-XHB
 XLI
+XHB
 WOOD
+VOX
+XTL
 ### Energy & Power
-SOXX
-SMHX
-SMH
+BLOK
+ROBO
 KWEB
-QTUM
+SOXX
+IBUY
 IBOT
 FDN
 CIBR
-IBUY
+SMHX
+SMH
+QTUM
 IGV
 ### Consumer & Retail
 PJP
+IHI
+IBRN
+IBB
 XLV
 PPH
-IHI
-IBB
-IBRN
 ### Technology & Innovation
-TAN
-UGA
-URA
 XOP
+PBW
+CRAK
 AMLP
 NUKZ
 NLR
-CRAK
-PBW
+UGA
+URA
+TAN
 ### Healthcare & Life Sciences
-PBJ
-XLP
-RTH
 BJK
 EATZ
+PBJ
+RTH
 XRT
+XLP
 ### Industrial & Aerospace
 JETS
-ITA
-AIRR
-XTN
 SEA
+XAR
+AIRR
+ITA
 PKB
+XTN
