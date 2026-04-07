@@ -1,4 +1,5 @@
 import os
+import re
 
 # Set these BEFORE any other imports to prevent threadpoolctl background discovery bugs
 # in some Anaconda/Linux environments. This limits threading but keeps output clean.
@@ -129,5 +130,47 @@ def perform_clustering():
     print(f"CSV saved to {output_csv}")
     print(f"Plot saved to {output_plot}")
 
+def parse_industries_etfs(filepath):
+    """Extract unique ETF tickers from a Pine Script industries switch statement."""
+    tickers = set()
+    pattern = re.compile(r'=>\s*"([A-Z0-9]+)"')
+    with open(filepath) as f:
+        for line in f:
+            m = pattern.search(line)
+            if m:
+                tickers.add(m.group(1))
+    return tickers
+
+
+def extend_watchlist(watchlist_path, new_tickers):
+    """Append tickers from new_tickers not already in the watchlist."""
+    with open(watchlist_path) as f:
+        content = f.read()
+
+    existing = set(
+        line.strip()
+        for line in content.splitlines()
+        if line.strip() and not line.startswith("###")
+    )
+
+    to_add = sorted(new_tickers - existing)
+
+    if not to_add:
+        print("No new ETFs to add from industries.txt — all already present.")
+        return
+
+    with open(watchlist_path, "a") as f:
+        f.write("\n### Additional Industry ETFs\n")
+        for ticker in to_add:
+            f.write(ticker + "\n")
+
+    print(f"Added {len(to_add)} new ETF(s) to {watchlist_path}: {', '.join(to_add)}")
+
+
 if __name__ == "__main__":
     perform_clustering()
+
+    industries_file = "/home/imagda/_invest2024/tradingview/github/watchlists/thematic_watchlists/industries.txt"
+    watchlist_file  = "/home/imagda/_invest2024/tradingview/github/watchlists/thematic_watchlists/io-ETFs-industries.txt"
+    new_tickers = parse_industries_etfs(industries_file)
+    extend_watchlist(watchlist_file, new_tickers)
