@@ -23,6 +23,11 @@ bShowCustom = input.bool(false, "Show Custom Ratio", group="Custom Ratio")
 sCustomNum = input.string("SPY", "Numerator", options=["SPY", "QQQ", "XLP", "XLY", "IWD", "IWF", "DJU", "DJT", "DJUSSC", "SPYV", "SPYG", "MDYV", "MDYG", "IJS", "IJT", "IWN", "IWO"], group="Custom Ratio")
 sCustomDen = input.string("QQQ", "Denominator", options=["SPY", "QQQ", "XLP", "XLY", "IWD", "IWF", "DJU", "DJT", "DJUSSC", "SPYV", "SPYG", "MDYV", "MDYG", "IJS", "IJT", "IWN", "IWO"], group="Custom Ratio")
 
+// Free Custom Ratio Settings (any ticker)
+bShowFreeCustom = input.bool(false, "Show Free Custom Ratio", group="Free Custom Ratio")
+sFreeCustomNum = input.string("IWM", "Numerator (any ticker)", group="Free Custom Ratio")
+sFreeCustomDen = input.string("QQQ", "Denominator (any ticker)", group="Free Custom Ratio")
+
 iSma = input.int(55, "SMA", display=display.none)
 bShowSMA = input.bool(true, "Show SMA Lines")
 bShowLabels = input.bool(true, "Show Ratio Labels", tooltip="Display ratio labels at the right edge of the chart")
@@ -95,6 +100,12 @@ customNumOpen = request.security(ticker.new("", sCustomNum, session=session.regu
 customDenClose = request.security(ticker.new("", sCustomDen, session=session.regular), timeframe.period, close)
 customDenOpen = request.security(ticker.new("", sCustomDen, session=session.regular), timeframe.period, open)
 
+// Free Custom Ratio Data
+freeCustomNumClose = request.security(ticker.new("", sFreeCustomNum, session=session.regular), timeframe.period, close)
+freeCustomNumOpen = request.security(ticker.new("", sFreeCustomNum, session=session.regular), timeframe.period, open)
+freeCustomDenClose = request.security(ticker.new("", sFreeCustomDen, session=session.regular), timeframe.period, close)
+freeCustomDenOpen = request.security(ticker.new("", sFreeCustomDen, session=session.regular), timeframe.period, open)
+
 // ========================================
 // GAP ADJUSTMENT LOGIC
 // ========================================
@@ -138,6 +149,8 @@ iwnAdjusted = f_gapAdjustedPrice(iwnClose, iwnOpen, bWithoutGaps, gapStartDate)
 iwoAdjusted = f_gapAdjustedPrice(iwoClose, iwoOpen, bWithoutGaps, gapStartDate)
 customNumAdjusted = f_gapAdjustedPrice(customNumClose, customNumOpen, bWithoutGaps, gapStartDate)
 customDenAdjusted = f_gapAdjustedPrice(customDenClose, customDenOpen, bWithoutGaps, gapStartDate)
+freeCustomNumAdjusted = f_gapAdjustedPrice(freeCustomNumClose, freeCustomNumOpen, bWithoutGaps, gapStartDate)
+freeCustomDenAdjusted = f_gapAdjustedPrice(freeCustomDenClose, freeCustomDenOpen, bWithoutGaps, gapStartDate)
 
 // ========================================
 // RATIO CALCULATIONS
@@ -152,6 +165,7 @@ ratioMDYVMDYG = bInverseRatios ? (mdyvAdjusted != 0 ? mdygAdjusted / mdyvAdjuste
 ratioIJSIJT = bInverseRatios ? (ijsAdjusted != 0 ? ijtAdjusted / ijsAdjusted : na) : (ijtAdjusted != 0 ? ijsAdjusted / ijtAdjusted : na)
 ratioIWNIWO = bInverseRatios ? (iwnAdjusted != 0 ? iwoAdjusted / iwnAdjusted : na) : (iwoAdjusted != 0 ? iwnAdjusted / iwoAdjusted : na)
 ratioCustom = bInverseRatios ? (customNumAdjusted != 0 ? customDenAdjusted / customNumAdjusted : na) : (customDenAdjusted != 0 ? customNumAdjusted / customDenAdjusted : na)
+ratioFreeCustom = bInverseRatios ? (freeCustomNumAdjusted != 0 ? freeCustomDenAdjusted / freeCustomNumAdjusted : na) : (freeCustomDenAdjusted != 0 ? freeCustomNumAdjusted / freeCustomDenAdjusted : na)
 
 // ========================================
 // SMA CALCULATIONS
@@ -166,6 +180,7 @@ smaMDYVMDYG = ta.sma(ratioMDYVMDYG, iSma)
 smaIJSIJT = ta.sma(ratioIJSIJT, iSma)
 smaIWNIWO = ta.sma(ratioIWNIWO, iSma)
 smaCustom = ta.sma(ratioCustom, iSma)
+smaFreeCustom = ta.sma(ratioFreeCustom, iSma)
 
 // ========================================
 // DETECT HOW MANY RATIOS ARE ENABLED
@@ -190,6 +205,8 @@ if bShowIJSIJT
 if bShowIWNIWO
     ratioCount := ratioCount + 1
 if bShowCustom
+    ratioCount := ratioCount + 1
+if bShowFreeCustom
     ratioCount := ratioCount + 1
 
 bool singleRatio = ratioCount == 1
@@ -278,6 +295,15 @@ colorSMACustom = singleRatio ? color.new(color.blue, 0) : color.new(color.fuchsi
 plot(bShowCustom ? ratioCustom : na, color=colorCustom, title="Custom Ratio", linewidth=2)
 plot(bShowCustom and bShowSMA ? smaCustom : na, color=colorSMACustom, title="Custom SMA", linewidth=1)
 
+// Free Custom Ratio
+string freeCustomLabelText = bInverseRatios ? sFreeCustomDen + ":" + sFreeCustomNum : sFreeCustomNum + ":" + sFreeCustomDen
+colorFreeCustom = singleRatio ?
+     (ratioFreeCustom >= smaFreeCustom ? color.new(color.green, 0) : color.new(color.red, 0)) :
+     (ratioFreeCustom >= smaFreeCustom ? color.new(color.yellow, 0) : color.new(color.yellow, 60))
+colorSMAFreeCustom = singleRatio ? color.new(color.blue, 0) : color.new(color.yellow, 70)
+plot(bShowFreeCustom ? ratioFreeCustom : na, color=colorFreeCustom, title="Free Custom Ratio", linewidth=2)
+plot(bShowFreeCustom and bShowSMA ? smaFreeCustom : na, color=colorSMAFreeCustom, title="Free Custom SMA", linewidth=1)
+
 // ========================================
 // LABELS AT LAST BAR
 // ========================================
@@ -341,3 +367,6 @@ if bShowLabels and barstate.islast
 
     if bShowCustom and not na(ratioCustom)
         label.new(bar_index, ratioCustom, text=customLabelText + gapSuffix, style=styleLoc, color=color.new(color.fuchsia, 0), textcolor=color.white, size=sizeLoc)
+
+    if bShowFreeCustom and not na(ratioFreeCustom)
+        label.new(bar_index, ratioFreeCustom, text=freeCustomLabelText + gapSuffix, style=styleLoc, color=color.new(color.yellow, 0), textcolor=color.black, size=sizeLoc)
