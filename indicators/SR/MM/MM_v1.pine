@@ -1,0 +1,85 @@
+//@version=6
+indicator("Gap-Free Ticker", "MM-v1", overlay=false, precision=2)
+
+// ========================================
+// INPUTS
+// ========================================
+sTicker      = input.string("SPY", "Ticker")
+
+bWithoutGaps = input.bool(true,  "Remove Overnight Gaps",  group="Gap Settings")
+gapStartDate = input.time(timestamp("01 Jan 2024 00:00 +0000"), "Start Date", group="Gap Settings")
+
+iSma         = input.int(55,    "SMA Length",  group="SMA", minval=1)
+bShowSMA     = input.bool(true, "Show SMA",    group="SMA")
+
+bShowLabel   = input.bool(true, "Show Label")
+
+// ========================================
+// PRICE DATA
+// ========================================
+[o, h, l, c] = request.security(
+     ticker.new("", sTicker, session=session.regular),
+     timeframe.period,
+     [open, high, low, close])
+
+// ========================================
+// GAP ADJUSTMENT (OHLC shifted together)
+// ========================================
+// Each overnight gap = open - prevClose.
+// Cumulative gap is subtracted from all four prices,
+// preserving candle shape while removing the jump.
+f_adjustOHLC(float _o, float _h, float _l, float _c, bool _enable, int _startDate) =>
+    var float cumGap   = 0.0
+    var float prevClose = na
+
+    bool pastStart = time >= _startDate
+    bool hasRef    = not na(prevClose) and not na(_o)
+
+    if _enable and pastStart and hasRef
+        cumGap += _o - prevClose
+
+    prevClose := _c
+
+    float shift = _enable and pastStart ? cumGap : 0.0
+    [_o - shift, _h - shift, _l - shift, _c - shift]
+
+[adjO, adjH, adjL, adjC] = f_adjustOHLC(o, h, l, c, bWithoutGaps, gapStartDate)
+
+// ========================================
+// SMA
+// ========================================
+smaLine = ta.sma(adjC, iSma)
+
+// ========================================
+// COLORS
+// ========================================
+bullColor = color.new(color.green, 0)
+bearColor = color.new(color.red,   0)
+barColor  = adjC >= adjO ? bullColor : bearColor
+
+// ========================================
+// PLOT
+// ========================================
+plotcandle(adjO, adjH, adjL, adjC,
+     title      = "Price",
+     color      = barColor,
+     wickcolor  = barColor,
+     bordercolor = barColor)
+
+plot(bShowSMA ? smaLine : na,
+     title     = "SMA",
+     color     = color.new(color.blue, 0),
+     linewidth = 1)
+
+// ========================================
+// LABEL
+// ========================================
+if bShowLabel and barstate.islast
+    string suffix = bWithoutGaps ? " [No Gaps]" : ""
+    label.new(
+         bar_index, adjH,
+         text      = sTicker + suffix,
+         style     = label.style_label_left,
+         color     = color.new(color.blue, 80),
+         textcolor = color.white,
+         size      = size.small)

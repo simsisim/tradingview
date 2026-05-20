@@ -1,0 +1,376 @@
+//@version=6
+indicator("Market Manipulation Calculator v1", "Manip-v1", overlay=false, max_labels_count=500, max_lines_count=500)
+
+// ========================================
+// INPUT PARAMETERS
+// ========================================
+startDate = input.time(timestamp("01 Nov 2024 00:00 +0000"), "Start Date", tooltip="Start date for tracking manipulation patterns")
+endDate = input.time(timestamp("31 Dec 2099 23:59 +0000"), "End Date", tooltip="End date (default far future = today)")
+maxDisplayRows = input.int(10, "Max Display Rows", minval=5, maxval=50, tooltip="Maximum number of daily rows to display in table (default: last 10 days)")
+
+// ========================================
+// ARRAYS FOR STORING DAILY DATA
+// ========================================
+var array<string> dates = array.new_string()
+var array<float> gapValues = array.new_float()
+var array<float> period1Values = array.new_float()  // 9:30-10:00
+var array<float> period2Values = array.new_float()  // 10:00-11:00
+var array<float> period3Values = array.new_float()  // 11:00-2:00
+var array<float> period4Values = array.new_float()  // 2:00-4:00
+var array<float> dailyTotals = array.new_float()
+var array<float> percentChanges = array.new_float()  // Daily % change
+var array<float> startPrices = array.new_float()  // Previous day's close (starting price)
+var array<float> endPrices = array.new_float()  // End of day close (4:00 PM price)
+
+// ========================================
+// GET PREVIOUS DAY CLOSE FROM DAILY TIMEFRAME
+// ========================================
+float dailyClose = request.security(syminfo.tickerid, "D", close[1], barmerge.gaps_off, barmerge.lookahead_on)
+
+// ========================================
+// DAILY PRICE TRACKING VARIABLES
+// ========================================
+var float price930 = na
+var float price1000 = na
+var float price1100 = na
+var float price1400 = na
+var float price1600 = na
+var int lastRecordedDay = 0
+
+// ========================================
+// TIME DETECTION
+// ========================================
+// Detect specific times (5-minute windows)
+bool is930 = hour == 9 and minute == 30
+bool is1000 = hour == 10 and minute == 0
+bool is1100 = hour == 11 and minute == 0
+bool is1400 = hour == 14 and minute == 0
+bool is1600 = hour == 16 and minute == 0
+
+// Get current day number for tracking
+int currentDay = dayofmonth
+
+// ========================================
+// CAPTURE PRICES AT KEY TIMES
+// ========================================
+// Reset at start of new day
+if is930 and currentDay != lastRecordedDay
+    price930 := na
+    price1000 := na
+    price1100 := na
+    price1400 := na
+    price1600 := na
+
+// Capture prices at specific times
+if is930
+    price930 := close
+
+if is1000
+    price1000 := close
+
+if is1100
+    price1100 := close
+
+if is1400
+    price1400 := close
+
+if is1600
+    price1600 := close
+
+// ========================================
+// CALCULATE AND STORE DAILY VALUES
+// ========================================
+// At end of day (4:00 PM), calculate all periods and store
+if is1600 and currentDay != lastRecordedDay and time >= startDate and time <= endDate
+    // Check if we have all required prices
+    if not na(dailyClose) and not na(price930) and not na(price1000) and not na(price1100) and not na(price1400) and not na(price1600)
+        // Calculate daily period changes
+        dayGap = price930 - dailyClose
+        day930to1000 = price1000 - price930
+        day1000to1100 = price1100 - price1000
+        day1100to1400 = price1400 - price1100
+        day1400to1600 = price1600 - price1400
+        dayTotal = dayGap + day930to1000 + day1000to1100 + day1100to1400 + day1400to1600
+
+        // Calculate daily percentage change (close to close)
+        dayPercentChange = dailyClose != 0 ? ((price1600 - dailyClose) / dailyClose) * 100 : 0.0
+
+        // Store in arrays
+        array.push(dates, str.format("{0,date,MM/dd}", time))
+        array.push(gapValues, dayGap)
+        array.push(period1Values, day930to1000)
+        array.push(period2Values, day1000to1100)
+        array.push(period3Values, day1100to1400)
+        array.push(period4Values, day1400to1600)
+        array.push(dailyTotals, dayTotal)
+        array.push(percentChanges, dayPercentChange)
+        array.push(startPrices, dailyClose)  // Starting price (previous day close)
+        array.push(endPrices, price1600)  // Ending price (4:00 PM close)
+
+        // Mark this day as recorded
+        lastRecordedDay := currentDay
+
+// ========================================
+// CREATE AND POPULATE TABLE
+// ========================================
+// Table rows: 1 header + 50 max data + 1 visible cumul + 1 visible % + 1 total cumul + 1 total % + 1 analysis = 56
+// Columns: Date, Gap, 9:30-10:00, 10:00-11:00, 11:00-2:00, 2:00-4:00, Daily Total, % Change = 8 columns
+var table displayTable = table.new(position.top_right, 8, 56, border_width=2, border_color=color.gray)
+
+if barstate.islast
+    // Get data size
+    int dataSize = array.size(dates)
+
+    // Header row (row 0)
+    table.cell(displayTable, 0, 0, "Date", bgcolor=color.new(color.blue, 70), text_color=color.white, text_size=size.small)
+    table.cell(displayTable, 1, 0, "Gap", bgcolor=color.new(color.blue, 70), text_color=color.white, text_size=size.small)
+    table.cell(displayTable, 2, 0, "9:30-10:00", bgcolor=color.new(color.blue, 70), text_color=color.white, text_size=size.small)
+    table.cell(displayTable, 3, 0, "10:00-11:00", bgcolor=color.new(color.blue, 70), text_color=color.white, text_size=size.small)
+    table.cell(displayTable, 4, 0, "11:00-2:00", bgcolor=color.new(color.blue, 70), text_color=color.white, text_size=size.small)
+    table.cell(displayTable, 5, 0, "2:00-4:00", bgcolor=color.new(color.blue, 70), text_color=color.white, text_size=size.small)
+    table.cell(displayTable, 6, 0, "Daily Total", bgcolor=color.new(color.blue, 70), text_color=color.white, text_size=size.small)
+    table.cell(displayTable, 7, 0, "% Change", bgcolor=color.new(color.blue, 70), text_color=color.white, text_size=size.small)
+
+    if dataSize > 0
+        // Determine how many rows to display (limit to maxDisplayRows)
+        int startIdx = math.max(0, dataSize - maxDisplayRows)
+        int displayCount = math.min(dataSize, maxDisplayRows)
+
+        // Display daily data rows (starting at row 1, row 0 is header)
+        for i = 0 to displayCount - 1
+            int dataIdx = startIdx + i
+            int row = i + 1  // Row 1 to displayCount
+
+            // Get values
+            string dateStr = array.get(dates, dataIdx)
+            float gapVal = array.get(gapValues, dataIdx)
+            float p1Val = array.get(period1Values, dataIdx)
+            float p2Val = array.get(period2Values, dataIdx)
+            float p3Val = array.get(period3Values, dataIdx)
+            float p4Val = array.get(period4Values, dataIdx)
+            float totalVal = array.get(dailyTotals, dataIdx)
+            float pctVal = array.get(percentChanges, dataIdx)
+
+            // Determine cell colors based on positive/negative
+            color gapColor = gapVal >= 0 ? color.new(color.green, 80) : color.new(color.red, 80)
+            color p1Color = p1Val >= 0 ? color.new(color.green, 80) : color.new(color.red, 80)
+            color p2Color = p2Val >= 0 ? color.new(color.green, 80) : color.new(color.red, 80)
+            color p3Color = p3Val >= 0 ? color.new(color.green, 80) : color.new(color.red, 80)
+            color p4Color = p4Val >= 0 ? color.new(color.green, 80) : color.new(color.red, 80)
+            color totalColor = totalVal >= 0 ? color.new(color.green, 80) : color.new(color.red, 80)
+            color pctColor = pctVal >= 0 ? color.new(color.green, 80) : color.new(color.red, 80)
+
+            // Populate cells
+            table.cell(displayTable, 0, row, dateStr, text_size=size.small)
+            table.cell(displayTable, 1, row, str.tostring(gapVal, "#.##"), bgcolor=gapColor, text_size=size.small)
+            table.cell(displayTable, 2, row, str.tostring(p1Val, "#.##"), bgcolor=p1Color, text_size=size.small)
+            table.cell(displayTable, 3, row, str.tostring(p2Val, "#.##"), bgcolor=p2Color, text_size=size.small)
+            table.cell(displayTable, 4, row, str.tostring(p3Val, "#.##"), bgcolor=p3Color, text_size=size.small)
+            table.cell(displayTable, 5, row, str.tostring(p4Val, "#.##"), bgcolor=p4Color, text_size=size.small)
+            table.cell(displayTable, 6, row, str.tostring(totalVal, "#.##"), bgcolor=totalColor, text_size=size.small)
+            table.cell(displayTable, 7, row, str.tostring(pctVal, "#.##") + "%", bgcolor=pctColor, text_size=size.small)
+
+        // ========================================
+        // CUMULATIVE ROW 1: VISIBLE/DISPLAYED ROWS ONLY
+        // ========================================
+        int visibleCumulativeRow = displayCount + 1
+
+        // Calculate cumulative sums for ONLY THE DISPLAYED ROWS
+        float visibleCumGap = 0.0
+        float visibleCumP1 = 0.0
+        float visibleCumP2 = 0.0
+        float visibleCumP3 = 0.0
+        float visibleCumP4 = 0.0
+        float visibleCumTotal = 0.0
+
+        // Sum only the displayed data range
+        for i = 0 to displayCount - 1
+            int dataIdx = startIdx + i
+            visibleCumGap += array.get(gapValues, dataIdx)
+            visibleCumP1 += array.get(period1Values, dataIdx)
+            visibleCumP2 += array.get(period2Values, dataIdx)
+            visibleCumP3 += array.get(period3Values, dataIdx)
+            visibleCumP4 += array.get(period4Values, dataIdx)
+            visibleCumTotal += array.get(dailyTotals, dataIdx)
+
+        // Calculate CUMULATIVE percentage for visible rows (first to last)
+        float visibleStartPrice = array.get(startPrices, startIdx)  // First day's starting price
+        float visibleEndPrice = array.get(endPrices, startIdx + displayCount - 1)  // Last day's ending price
+        float visibleCumPct = visibleStartPrice != 0 ? ((visibleEndPrice - visibleStartPrice) / visibleStartPrice) * 100 : 0.0
+
+        // Visible cumulative row colors
+        color visCumGapColor = visibleCumGap >= 0 ? color.new(color.green, 50) : color.new(color.red, 50)
+        color visCumP1Color = visibleCumP1 >= 0 ? color.new(color.green, 50) : color.new(color.red, 50)
+        color visCumP2Color = visibleCumP2 >= 0 ? color.new(color.green, 50) : color.new(color.red, 50)
+        color visCumP3Color = visibleCumP3 >= 0 ? color.new(color.green, 50) : color.new(color.red, 50)
+        color visCumP4Color = visibleCumP4 >= 0 ? color.new(color.green, 50) : color.new(color.red, 50)
+        color visCumTotalColor = visibleCumTotal >= 0 ? color.new(color.green, 50) : color.new(color.red, 50)
+        color visCumPctColor = visibleCumPct >= 0 ? color.new(color.green, 50) : color.new(color.red, 50)
+
+        // Populate VISIBLE cumulative row
+        string visibleLabel = "VISIBLE\n(" + str.tostring(displayCount) + " days)"
+        table.cell(displayTable, 0, visibleCumulativeRow, visibleLabel, bgcolor=color.new(color.blue, 70), text_color=color.white, text_size=size.small)
+        table.cell(displayTable, 1, visibleCumulativeRow, str.tostring(visibleCumGap, "#.##"), bgcolor=visCumGapColor, text_size=size.normal)
+        table.cell(displayTable, 2, visibleCumulativeRow, str.tostring(visibleCumP1, "#.##"), bgcolor=visCumP1Color, text_size=size.normal)
+        table.cell(displayTable, 3, visibleCumulativeRow, str.tostring(visibleCumP2, "#.##"), bgcolor=visCumP2Color, text_size=size.normal)
+        table.cell(displayTable, 4, visibleCumulativeRow, str.tostring(visibleCumP3, "#.##"), bgcolor=visCumP3Color, text_size=size.normal)
+        table.cell(displayTable, 5, visibleCumulativeRow, str.tostring(visibleCumP4, "#.##"), bgcolor=visCumP4Color, text_size=size.normal)
+        table.cell(displayTable, 6, visibleCumulativeRow, str.tostring(visibleCumTotal, "#.##"), bgcolor=visCumTotalColor, text_size=size.normal)
+        table.cell(displayTable, 7, visibleCumulativeRow, str.tostring(visibleCumPct, "#.##") + "%", bgcolor=visCumPctColor, text_size=size.normal)
+
+        // ========================================
+        // VISIBLE % OF PRICE ROW
+        // ========================================
+        int visiblePctOfPriceRow = displayCount + 2
+
+        // Get current stock price (most recent close)
+        float currentPrice = dataSize > 0 ? array.get(endPrices, dataSize - 1) : 0.0
+
+        // Calculate each period as % of current price
+        float visGapPctOfPrice = currentPrice != 0 ? (visibleCumGap / currentPrice) * 100 : 0.0
+        float visP1PctOfPrice = currentPrice != 0 ? (visibleCumP1 / currentPrice) * 100 : 0.0
+        float visP2PctOfPrice = currentPrice != 0 ? (visibleCumP2 / currentPrice) * 100 : 0.0
+        float visP3PctOfPrice = currentPrice != 0 ? (visibleCumP3 / currentPrice) * 100 : 0.0
+        float visP4PctOfPrice = currentPrice != 0 ? (visibleCumP4 / currentPrice) * 100 : 0.0
+        float visTotalPctOfPrice = currentPrice != 0 ? (visibleCumTotal / currentPrice) * 100 : 0.0
+
+        // Colors for % of price row
+        color visGapPoPColor = visGapPctOfPrice >= 0 ? color.new(color.green, 70) : color.new(color.red, 70)
+        color visP1PoPColor = visP1PctOfPrice >= 0 ? color.new(color.green, 70) : color.new(color.red, 70)
+        color visP2PoPColor = visP2PctOfPrice >= 0 ? color.new(color.green, 70) : color.new(color.red, 70)
+        color visP3PoPColor = visP3PctOfPrice >= 0 ? color.new(color.green, 70) : color.new(color.red, 70)
+        color visP4PoPColor = visP4PctOfPrice >= 0 ? color.new(color.green, 70) : color.new(color.red, 70)
+        color visTotalPoPColor = visTotalPctOfPrice >= 0 ? color.new(color.green, 70) : color.new(color.red, 70)
+
+        // Populate VISIBLE % of Price row
+        table.cell(displayTable, 0, visiblePctOfPriceRow, "% of Price", bgcolor=color.new(color.blue, 80), text_color=color.white, text_size=size.small)
+        table.cell(displayTable, 1, visiblePctOfPriceRow, str.tostring(visGapPctOfPrice, "#.##") + "%", bgcolor=visGapPoPColor, text_size=size.small)
+        table.cell(displayTable, 2, visiblePctOfPriceRow, str.tostring(visP1PctOfPrice, "#.##") + "%", bgcolor=visP1PoPColor, text_size=size.small)
+        table.cell(displayTable, 3, visiblePctOfPriceRow, str.tostring(visP2PctOfPrice, "#.##") + "%", bgcolor=visP2PoPColor, text_size=size.small)
+        table.cell(displayTable, 4, visiblePctOfPriceRow, str.tostring(visP3PctOfPrice, "#.##") + "%", bgcolor=visP3PoPColor, text_size=size.small)
+        table.cell(displayTable, 5, visiblePctOfPriceRow, str.tostring(visP4PctOfPrice, "#.##") + "%", bgcolor=visP4PoPColor, text_size=size.small)
+        table.cell(displayTable, 6, visiblePctOfPriceRow, str.tostring(visTotalPctOfPrice, "#.##") + "%", bgcolor=visTotalPoPColor, text_size=size.small)
+        table.cell(displayTable, 7, visiblePctOfPriceRow, "N/A", bgcolor=color.new(color.gray, 80), text_size=size.small)
+
+        // ========================================
+        // CUMULATIVE ROW 2: TOTAL (ALL STORED DATA)
+        // ========================================
+        int totalCumulativeRow = displayCount + 3
+
+        // Calculate cumulative sums across ALL stored data
+        float totalCumGap = array.sum(gapValues)
+        float totalCumP1 = array.sum(period1Values)
+        float totalCumP2 = array.sum(period2Values)
+        float totalCumP3 = array.sum(period3Values)
+        float totalCumP4 = array.sum(period4Values)
+        float totalCumTotal = array.sum(dailyTotals)
+
+        // Calculate CUMULATIVE percentage for all stored data (first to last)
+        float totalStartPrice = array.get(startPrices, 0)  // Very first day's starting price
+        float totalEndPrice = array.get(endPrices, dataSize - 1)  // Very last day's ending price
+        float totalCumPct = totalStartPrice != 0 ? ((totalEndPrice - totalStartPrice) / totalStartPrice) * 100 : 0.0
+
+        // Total cumulative row colors
+        color totCumGapColor = totalCumGap >= 0 ? color.new(color.green, 50) : color.new(color.red, 50)
+        color totCumP1Color = totalCumP1 >= 0 ? color.new(color.green, 50) : color.new(color.red, 50)
+        color totCumP2Color = totalCumP2 >= 0 ? color.new(color.green, 50) : color.new(color.red, 50)
+        color totCumP3Color = totalCumP3 >= 0 ? color.new(color.green, 50) : color.new(color.red, 50)
+        color totCumP4Color = totalCumP4 >= 0 ? color.new(color.green, 50) : color.new(color.red, 50)
+        color totCumTotalColor = totalCumTotal >= 0 ? color.new(color.green, 50) : color.new(color.red, 50)
+        color totCumPctColor = totalCumPct >= 0 ? color.new(color.green, 50) : color.new(color.red, 50)
+
+        // Populate TOTAL cumulative row
+        string totalLabel = "TOTAL\n(" + str.tostring(dataSize) + " days)"
+        table.cell(displayTable, 0, totalCumulativeRow, totalLabel, bgcolor=color.new(color.yellow, 60), text_color=color.black, text_size=size.small)
+        table.cell(displayTable, 1, totalCumulativeRow, str.tostring(totalCumGap, "#.##"), bgcolor=totCumGapColor, text_size=size.normal)
+        table.cell(displayTable, 2, totalCumulativeRow, str.tostring(totalCumP1, "#.##"), bgcolor=totCumP1Color, text_size=size.normal)
+        table.cell(displayTable, 3, totalCumulativeRow, str.tostring(totalCumP2, "#.##"), bgcolor=totCumP2Color, text_size=size.normal)
+        table.cell(displayTable, 4, totalCumulativeRow, str.tostring(totalCumP3, "#.##"), bgcolor=totCumP3Color, text_size=size.normal)
+        table.cell(displayTable, 5, totalCumulativeRow, str.tostring(totalCumP4, "#.##"), bgcolor=totCumP4Color, text_size=size.normal)
+        table.cell(displayTable, 6, totalCumulativeRow, str.tostring(totalCumTotal, "#.##"), bgcolor=totCumTotalColor, text_size=size.normal)
+        table.cell(displayTable, 7, totalCumulativeRow, str.tostring(totalCumPct, "#.##") + "%", bgcolor=totCumPctColor, text_size=size.normal)
+
+        // ========================================
+        // TOTAL % OF PRICE ROW
+        // ========================================
+        int totalPctOfPriceRow = displayCount + 4
+
+        // Calculate each period as % of current price
+        float totGapPctOfPrice = currentPrice != 0 ? (totalCumGap / currentPrice) * 100 : 0.0
+        float totP1PctOfPrice = currentPrice != 0 ? (totalCumP1 / currentPrice) * 100 : 0.0
+        float totP2PctOfPrice = currentPrice != 0 ? (totalCumP2 / currentPrice) * 100 : 0.0
+        float totP3PctOfPrice = currentPrice != 0 ? (totalCumP3 / currentPrice) * 100 : 0.0
+        float totP4PctOfPrice = currentPrice != 0 ? (totalCumP4 / currentPrice) * 100 : 0.0
+        float totTotalPctOfPrice = currentPrice != 0 ? (totalCumTotal / currentPrice) * 100 : 0.0
+
+        // Colors for % of price row
+        color totGapPoPColor = totGapPctOfPrice >= 0 ? color.new(color.green, 70) : color.new(color.red, 70)
+        color totP1PoPColor = totP1PctOfPrice >= 0 ? color.new(color.green, 70) : color.new(color.red, 70)
+        color totP2PoPColor = totP2PctOfPrice >= 0 ? color.new(color.green, 70) : color.new(color.red, 70)
+        color totP3PoPColor = totP3PctOfPrice >= 0 ? color.new(color.green, 70) : color.new(color.red, 70)
+        color totP4PoPColor = totP4PctOfPrice >= 0 ? color.new(color.green, 70) : color.new(color.red, 70)
+        color totTotalPoPColor = totTotalPctOfPrice >= 0 ? color.new(color.green, 70) : color.new(color.red, 70)
+
+        // Populate TOTAL % of Price row
+        table.cell(displayTable, 0, totalPctOfPriceRow, "% of Price", bgcolor=color.new(color.yellow, 70), text_color=color.black, text_size=size.small)
+        table.cell(displayTable, 1, totalPctOfPriceRow, str.tostring(totGapPctOfPrice, "#.##") + "%", bgcolor=totGapPoPColor, text_size=size.small)
+        table.cell(displayTable, 2, totalPctOfPriceRow, str.tostring(totP1PctOfPrice, "#.##") + "%", bgcolor=totP1PoPColor, text_size=size.small)
+        table.cell(displayTable, 3, totalPctOfPriceRow, str.tostring(totP2PctOfPrice, "#.##") + "%", bgcolor=totP2PoPColor, text_size=size.small)
+        table.cell(displayTable, 4, totalPctOfPriceRow, str.tostring(totP3PctOfPrice, "#.##") + "%", bgcolor=totP3PoPColor, text_size=size.small)
+        table.cell(displayTable, 5, totalPctOfPriceRow, str.tostring(totP4PctOfPrice, "#.##") + "%", bgcolor=totP4PoPColor, text_size=size.small)
+        table.cell(displayTable, 6, totalPctOfPriceRow, str.tostring(totTotalPctOfPrice, "#.##") + "%", bgcolor=totTotalPoPColor, text_size=size.small)
+        table.cell(displayTable, 7, totalPctOfPriceRow, "N/A", bgcolor=color.new(color.gray, 80), text_size=size.small)
+
+        // ========================================
+        // ANALYSIS ROW: Amateur Hour vs Smart Money (Both Visible and Total)
+        // ========================================
+        // Row structure: 0(header), 1-N(data), N+1(vis cumul), N+2(vis %), N+3(tot cumul), N+4(tot %), N+5(analysis)
+        int summaryRow = displayCount + 5
+
+        // Calculate for VISIBLE data
+        float visibleAmateurHour = visibleCumGap + visibleCumP1
+        float visibleSmartMoney = visibleCumP2 + visibleCumP3 + visibleCumP4
+
+        // Calculate for TOTAL data
+        float totalAmateurHour = totalCumGap + totalCumP1
+        float totalSmartMoney = totalCumP2 + totalCumP3 + totalCumP4
+
+        // Colors
+        color visAmateurColor = visibleAmateurHour >= 0 ? color.new(color.orange, 50) : color.new(color.purple, 50)
+        color visSmartColor = visibleSmartMoney >= 0 ? color.new(color.orange, 50) : color.new(color.purple, 50)
+        color totAmateurColor = totalAmateurHour >= 0 ? color.new(color.orange, 50) : color.new(color.purple, 50)
+        color totSmartColor = totalSmartMoney >= 0 ? color.new(color.orange, 50) : color.new(color.purple, 50)
+
+        // Build analysis text
+        string analysisText = "ANALYSIS\nVis / Tot"
+        string amateurText = "Amateur:\n" + str.tostring(visibleAmateurHour, "#.##") + " / " + str.tostring(totalAmateurHour, "#.##")
+        string smartText = "Smart $:\n" + str.tostring(visibleSmartMoney, "#.##") + " / " + str.tostring(totalSmartMoney, "#.##")
+
+        table.cell(displayTable, 0, summaryRow, analysisText, bgcolor=color.new(color.gray, 60), text_color=color.white, text_size=size.small)
+        table.cell(displayTable, 1, summaryRow, amateurText, bgcolor=color.new(color.gray, 70), text_size=size.small, text_color=color.white)
+        table.cell(displayTable, 2, summaryRow, "", bgcolor=color.new(color.gray, 80))
+        table.cell(displayTable, 3, summaryRow, "", bgcolor=color.new(color.gray, 80))
+        table.cell(displayTable, 4, summaryRow, smartText, bgcolor=color.new(color.gray, 70), text_size=size.small, text_color=color.white)
+        table.cell(displayTable, 5, summaryRow, "", bgcolor=color.new(color.gray, 80))
+        table.cell(displayTable, 6, summaryRow, "", bgcolor=color.new(color.gray, 80))
+        table.cell(displayTable, 7, summaryRow, "", bgcolor=color.new(color.gray, 80))
+    else
+        // No data message with debug info
+        string debugMsg = "No data yet - Debug Info:\n"
+        debugMsg += "Current Time: " + str.tostring(hour) + ":" + str.tostring(minute) + "\n"
+        debugMsg += "Current Day: " + str.tostring(currentDay) + " | Last Recorded: " + str.tostring(lastRecordedDay) + "\n"
+        debugMsg += "Prev Day Close: " + str.tostring(dailyClose, "#.##") + "\n"
+        debugMsg += "9:30 price: " + str.tostring(price930, "#.##") + "\n"
+        debugMsg += "10:00 price: " + str.tostring(price1000, "#.##") + "\n"
+        debugMsg += "11:00 price: " + str.tostring(price1100, "#.##") + "\n"
+        debugMsg += "14:00 price: " + str.tostring(price1400, "#.##") + "\n"
+        debugMsg += "16:00 price: " + str.tostring(price1600, "#.##") + "\n"
+        debugMsg += "\nWaiting for end of day (4:00 PM) to record data..."
+
+        table.cell(displayTable, 0, 1, debugMsg, text_size=size.small, text_color=color.orange)
+        table.merge_cells(displayTable, 0, 1, 7, 1)
+
+// ========================================
+// PLOT PLACEHOLDER (required for non-overlay indicators)
+// ========================================
+plot(na, title="Placeholder")

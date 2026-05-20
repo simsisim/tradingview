@@ -1,0 +1,39 @@
+Photonische Materialien und Substrate
+1. $GLW
+2. $LWLG
+3. $AXTI
+4. $ALMU
+
+Verpackung und Montage
+1. $FN
+2. $AMKR
+3. $TSM
+4. $GFS
+
+Laser und Lichtquellen
+1. $LITE
+2. $COHR
+3. $IPGP
+4. $LPTH
+5. $LASR
+6. $LASE
+
+Optische Komponenten und Transceiver
+1. $AAOI
+2. $OPTX
+
+Photonisch integrierte Schaltkreise 
+1. $MTSI
+2. $POET
+3. $AVGO
+4. $MRVL
+5. $CRDO
+
+Test, Sensorik, breitere Photonik
+
+1. $CIEN
+2. $CSCO
+3. $MKSI
+4. $VIAV
+5. $AEHR
+

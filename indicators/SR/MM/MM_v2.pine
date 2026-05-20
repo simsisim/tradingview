@@ -1,0 +1,481 @@
+//@version=6
+indicator("Market Manipulation Calculator v2", "Manip-v2", overlay=false)
+
+// ========================================
+// INPUTS
+// ========================================
+maxDisplayRows  = input.int(10,   "Max Display Rows", minval=5, maxval=50)
+ytdYear         = input.int(2025, "YTD Year", tooltip="Update each January to current year")
+
+// Table appearance
+fontSizeInput   = input.string("small",  "Font Size",            options=["tiny", "small", "normal", "large"],         group="Table Style")
+tablePosV       = input.string("top",    "Vertical Position",    options=["top", "middle", "bottom"],                  group="Table Style")
+tablePosH       = input.string("right",  "Horizontal Position",  options=["left", "center", "right"],                  group="Table Style")
+tablePos        = tablePosV + "_" + tablePosH
+
+bOverrideDates  = input.bool(false, "Override Date Range", group="Date Range", tooltip="When off, uses last 6 months automatically")
+startDateInput  = input.time(timestamp("01 Jan 2024 00:00 +0000"), "Start Date", group="Date Range")
+endDateInput    = input.time(timestamp("31 Dec 2099 23:59 +0000"), "End Date",   group="Date Range")
+
+// Effective dates: dynamic 6-month window unless user overrides
+int endDate  = bOverrideDates ? endDateInput : timenow
+int _sm      = month(timenow) - 6
+int _sy      = year(timenow)
+if _sm <= 0
+    _sm := _sm + 12
+    _sy := _sy - 1
+int startDate = bOverrideDates ? startDateInput : timestamp(_sy, _sm, dayofmonth(timenow), 0, 0)
+
+// ========================================
+// ARRAYS — DAILY DATA
+// ========================================
+var array<string> dates        = array.new_string()
+var array<float>  gapValues    = array.new_float()   // Gap: prevClose → 9:30
+var array<float>  period1      = array.new_float()   // P1:  9:30 → 10:00
+var array<float>  period2      = array.new_float()   // P2: 10:00 → 11:00
+var array<float>  period3      = array.new_float()   // P3: 11:00 → 14:00
+var array<float>  period4      = array.new_float()   // P4: 14:00 → 16:00
+var array<float>  dailyTotals  = array.new_float()
+var array<float>  startPrices  = array.new_float()   // prevClose (base for gap)
+var array<float>  endPrices    = array.new_float()   // 16:00 close
+var array<float>  sessionPct   = array.new_float()   // (Close - 9:30) / 9:30 * 100
+var array<float>  c10Pct       = array.new_float()   // (Close - 10am) / 10am * 100
+var array<float>  c11Pct       = array.new_float()   // (Close - 11am) / 11am * 100
+var array<int>    dayYear      = array.new_int()     // year(time) at recording
+
+// ========================================
+// PREVIOUS DAY CLOSE (daily TF)
+// ========================================
+float dailyClose = request.security(syminfo.tickerid, "D", close[1], barmerge.gaps_off, barmerge.lookahead_on)
+
+// ========================================
+// INTRADAY PRICE TRACKING
+// ========================================
+var float price930  = na
+var float price1000 = na
+var float price1100 = na
+var float price1400 = na
+var float price1600 = na
+var int   lastDay   = 0
+
+// Explicit ET timezone — immune to chart display timezone (UTC+2 etc.)
+bool is930  = hour(time, "America/New_York") == 9  and minute(time, "America/New_York") == 30
+bool is1000 = hour(time, "America/New_York") == 10 and minute(time, "America/New_York") == 0
+bool is1100 = hour(time, "America/New_York") == 11 and minute(time, "America/New_York") == 0
+bool is1400 = hour(time, "America/New_York") == 14 and minute(time, "America/New_York") == 0
+bool is1600 = hour(time, "America/New_York") == 16 and minute(time, "America/New_York") == 0
+
+int currentDay = dayofmonth
+
+// Reset at new day
+if is930 and currentDay != lastDay
+    price930  := na
+    price1000 := na
+    price1100 := na
+    price1400 := na
+    price1600 := na
+
+// open = price at exact bar start (9:30:00, 10:00:00 etc.) — matches CSV model
+// close only for 16:00 (end-of-session official close)
+if is930
+    price930  := open
+if is1000
+    price1000 := open
+if is1100
+    price1100 := open
+if is1400
+    price1400 := open
+if is1600
+    price1600 := close
+
+// ========================================
+// RECORD DAILY DATA AT 16:00
+// ========================================
+if is1600 and currentDay != lastDay and time >= startDate and time <= endDate
+    bool allPrices = not na(dailyClose) and not na(price930) and not na(price1000) and not na(price1100) and not na(price1400) and not na(price1600)
+    if allPrices
+        float dayGap  = price930  - dailyClose
+        float dayP1   = price1000 - price930
+        float dayP2   = price1100 - price1000
+        float dayP3   = price1400 - price1100
+        float dayP4   = price1600 - price1400
+        float dayTot  = dayGap + dayP1 + dayP2 + dayP3 + dayP4
+        float sessP   = price930  != 0 ? ((price1600 - price930)  / price930)  * 100 : na
+        float c10P    = price1000 != 0 ? ((price1600 - price1000) / price1000) * 100 : na
+        float c11P    = price1100 != 0 ? ((price1600 - price1100) / price1100) * 100 : na
+
+        array.push(dates,       str.format("{0,date,MM/dd}", time))
+        array.push(gapValues,   dayGap)
+        array.push(period1,     dayP1)
+        array.push(period2,     dayP2)
+        array.push(period3,     dayP3)
+        array.push(period4,     dayP4)
+        array.push(dailyTotals, dayTot)
+        array.push(startPrices, dailyClose)
+        array.push(endPrices,   price1600)
+        array.push(sessionPct,  sessP)
+        array.push(c10Pct,      c10P)
+        array.push(c11Pct,      c11P)
+        array.push(dayYear,     year(time))
+
+        lastDay := currentDay
+
+// ========================================
+// HELPER FUNCTIONS
+// ========================================
+// Opaque enough that white text is always readable on top
+f_color(float val) =>
+    val >= 0 ? color.new(color.green, 30) : color.new(color.red, 30)
+
+f_scoreColor(int score, int max) =>
+    score >= max ? color.new(color.green, 30) : score > 0 ? color.new(color.orange, 20) : color.new(color.red, 30)
+
+f_fmt(float val) =>
+    na(val) ? "-" : str.tostring(val, "#.##")
+
+f_pct(float val) =>
+    na(val) ? "-" : str.tostring(val, "#.##") + "%"
+
+// Shared style constants for value cells
+color TXT     = color.white
+color DATE_BG = color.new(color.gray, 20)
+string _sz    = fontSizeInput == "tiny" ? size.tiny : fontSizeInput == "normal" ? size.normal : fontSizeInput == "large" ? size.large : size.small
+
+// ========================================
+// TABLE — 8 cols x 58 rows (50 max data + 8 trailer)
+// Cols: Date(0) Gap(1) P1(2) P2(3) P3(4) P4(5) Total(6) Sess%(7)
+// ========================================
+var table tbl = table.new(tablePos, 8, 58, border_width=1, border_color=color.gray)
+
+color HDR_BG  = color.new(color.blue,  70)
+color SUM5_BG = color.new(color.teal,  55)
+color SUM10_BG = color.new(color.teal, 65)
+color SUM20_BG = color.new(color.teal, 75)
+color YTD_BG  = color.new(color.yellow, 55)
+color SIG_BG  = color.new(color.navy,  65)
+color AMT_BG  = color.new(color.gray,  60)
+
+if barstate.islast
+    int n = array.size(dates)
+
+    // ====================================================
+    // ROLLING AVERAGES (inline — no function, avoids type issues)
+    // Returns na until window is fully populated (matches CSV)
+    // ====================================================
+    float sess5  = na
+    float sess10 = na
+    float sess20 = na
+    float c10_5  = na
+    float c10_10 = na
+    float c10_20 = na
+    float c11_5  = na
+    float c11_10 = na
+    float c11_20 = na
+
+    if n >= 5
+        float _s = 0.0
+        for i = (n - 5) to (n - 1)
+            _s := _s + array.get(sessionPct, i)
+        sess5 := _s / 5
+        float _c = 0.0
+        for i = (n - 5) to (n - 1)
+            _c := _c + array.get(c10Pct, i)
+        c10_5 := _c / 5
+        float _d = 0.0
+        for i = (n - 5) to (n - 1)
+            _d := _d + array.get(c11Pct, i)
+        c11_5 := _d / 5
+
+    if n >= 10
+        float _s = 0.0
+        for i = (n - 10) to (n - 1)
+            _s := _s + array.get(sessionPct, i)
+        sess10 := _s / 10
+        float _c = 0.0
+        for i = (n - 10) to (n - 1)
+            _c := _c + array.get(c10Pct, i)
+        c10_10 := _c / 10
+        float _d = 0.0
+        for i = (n - 10) to (n - 1)
+            _d := _d + array.get(c11Pct, i)
+        c11_10 := _d / 10
+
+    if n >= 20
+        float _s = 0.0
+        for i = (n - 20) to (n - 1)
+            _s := _s + array.get(sessionPct, i)
+        sess20 := _s / 20
+        float _c = 0.0
+        for i = (n - 20) to (n - 1)
+            _c := _c + array.get(c10Pct, i)
+        c10_20 := _c / 20
+        float _d = 0.0
+        for i = (n - 20) to (n - 1)
+            _d := _d + array.get(c11Pct, i)
+        c11_20 := _d / 20
+
+    // Signal flags (1 = bullish, 0 = bearish/na)
+    int sig_s5   = (not na(sess5)  and sess5  > 0) ? 1 : 0
+    int sig_s10  = (not na(sess10) and sess10 > 0) ? 1 : 0
+    int sig_s20  = (not na(sess20) and sess20 > 0) ? 1 : 0
+    int sig_c5   = (not na(c10_5)  and c10_5  > 0) ? 1 : 0
+    int sig_c10  = (not na(c10_10) and c10_10 > 0) ? 1 : 0
+    int sig_c20  = (not na(c10_20) and c10_20 > 0) ? 1 : 0
+    int sig_d5   = (not na(c11_5)  and c11_5  > 0) ? 1 : 0
+    int sig_d10  = (not na(c11_10) and c11_10 > 0) ? 1 : 0
+    int sig_d20  = (not na(c11_20) and c11_20 > 0) ? 1 : 0
+
+    int sessScore  = sig_s5  + sig_s10  + sig_s20
+    int c10Score   = sig_c5  + sig_c10  + sig_c20
+    int c11Score   = sig_d5  + sig_d10  + sig_d20
+    int totalScore = sessScore + c10Score + c11Score
+
+    // ====================================================
+    // SUMMARY WINDOW SUMS  (Last 5 / 10 / 20 / YTD)
+    // Session% uses compounded return, NOT sum of daily %
+    // ====================================================
+
+    // Last 5
+    int cnt5   = math.min(n, 5)
+    float l5Gap = 0.0
+    float l5P1  = 0.0
+    float l5P2  = 0.0
+    float l5P3  = 0.0
+    float l5P4  = 0.0
+    float l5Tot = 0.0
+    for i = (n - cnt5) to (n - 1)
+        l5Gap := l5Gap + array.get(gapValues, i)
+        l5P1  := l5P1  + array.get(period1,   i)
+        l5P2  := l5P2  + array.get(period2,   i)
+        l5P3  := l5P3  + array.get(period3,   i)
+        l5P4  := l5P4  + array.get(period4,   i)
+        l5Tot := l5Tot + array.get(dailyTotals, i)
+    float l5Sp = na
+    if cnt5 > 0
+        float _sp = array.get(startPrices, n - cnt5)
+        float _ep = array.get(endPrices,   n - 1)
+        l5Sp := _sp != 0 ? ((_ep - _sp) / _sp) * 100 : na
+
+    // Last 10
+    int cnt10   = math.min(n, 10)
+    float l10Gap = 0.0
+    float l10P1  = 0.0
+    float l10P2  = 0.0
+    float l10P3  = 0.0
+    float l10P4  = 0.0
+    float l10Tot = 0.0
+    for i = (n - cnt10) to (n - 1)
+        l10Gap := l10Gap + array.get(gapValues, i)
+        l10P1  := l10P1  + array.get(period1,   i)
+        l10P2  := l10P2  + array.get(period2,   i)
+        l10P3  := l10P3  + array.get(period3,   i)
+        l10P4  := l10P4  + array.get(period4,   i)
+        l10Tot := l10Tot + array.get(dailyTotals, i)
+    float l10Sp = na
+    if cnt10 > 0
+        float _sp = array.get(startPrices, n - cnt10)
+        float _ep = array.get(endPrices,   n - 1)
+        l10Sp := _sp != 0 ? ((_ep - _sp) / _sp) * 100 : na
+
+    // Last 20
+    int cnt20   = math.min(n, 20)
+    float l20Gap = 0.0
+    float l20P1  = 0.0
+    float l20P2  = 0.0
+    float l20P3  = 0.0
+    float l20P4  = 0.0
+    float l20Tot = 0.0
+    for i = (n - cnt20) to (n - 1)
+        l20Gap := l20Gap + array.get(gapValues, i)
+        l20P1  := l20P1  + array.get(period1,   i)
+        l20P2  := l20P2  + array.get(period2,   i)
+        l20P3  := l20P3  + array.get(period3,   i)
+        l20P4  := l20P4  + array.get(period4,   i)
+        l20Tot := l20Tot + array.get(dailyTotals, i)
+    float l20Sp = na
+    if cnt20 > 0
+        float _sp = array.get(startPrices, n - cnt20)
+        float _ep = array.get(endPrices,   n - 1)
+        l20Sp := _sp != 0 ? ((_ep - _sp) / _sp) * 100 : na
+
+    // YTD — filter by dayYear
+    float ytdGap = 0.0
+    float ytdP1  = 0.0
+    float ytdP2  = 0.0
+    float ytdP3  = 0.0
+    float ytdP4  = 0.0
+    float ytdTot = 0.0
+    int   ytdFirst = -1
+    int   ytdCount = 0
+    for i = 0 to n - 1
+        if array.get(dayYear, i) == ytdYear
+            if ytdFirst == -1
+                ytdFirst := i
+            ytdGap := ytdGap + array.get(gapValues, i)
+            ytdP1  := ytdP1  + array.get(period1,   i)
+            ytdP2  := ytdP2  + array.get(period2,   i)
+            ytdP3  := ytdP3  + array.get(period3,   i)
+            ytdP4  := ytdP4  + array.get(period4,   i)
+            ytdTot := ytdTot + array.get(dailyTotals, i)
+            ytdCount := ytdCount + 1
+    float ytdSp = na
+    if ytdFirst >= 0 and ytdCount > 0
+        float _sp = array.get(startPrices, ytdFirst)
+        float _ep = array.get(endPrices,   ytdFirst + ytdCount - 1)
+        ytdSp := _sp != 0 ? ((_ep - _sp) / _sp) * 100 : na
+
+    // ====================================================
+    // DRAW HEADER
+    // ====================================================
+    table.cell(tbl, 0, 0, "Date",       bgcolor=HDR_BG, text_color=color.white, text_size=_sz)
+    table.cell(tbl, 1, 0, "Gap",        bgcolor=HDR_BG, text_color=color.white, text_size=_sz)
+    table.cell(tbl, 2, 0, "P1\n9:30-10", bgcolor=HDR_BG, text_color=color.white, text_size=_sz)
+    table.cell(tbl, 3, 0, "P2\n10-11",  bgcolor=HDR_BG, text_color=color.white, text_size=_sz)
+    table.cell(tbl, 4, 0, "P3\n11-2",   bgcolor=HDR_BG, text_color=color.white, text_size=_sz)
+    table.cell(tbl, 5, 0, "P4\n2-4",    bgcolor=HDR_BG, text_color=color.white, text_size=_sz)
+    table.cell(tbl, 6, 0, "Total",      bgcolor=HDR_BG, text_color=color.white, text_size=_sz)
+    table.cell(tbl, 7, 0, "Sess%",      bgcolor=HDR_BG, text_color=color.white, text_size=_sz)
+
+    if n > 0
+        // ====================================================
+        // DRAW DAILY ROWS
+        // ====================================================
+        int startIdx    = math.max(0, n - maxDisplayRows)
+        int displayCount = math.min(n, maxDisplayRows)
+
+        for i = 0 to displayCount - 1
+            int di  = startIdx + i
+            int row = i + 1
+
+            float gv = array.get(gapValues, di)
+            float p1 = array.get(period1,   di)
+            float p2 = array.get(period2,   di)
+            float p3 = array.get(period3,   di)
+            float p4 = array.get(period4,   di)
+            float tv = array.get(dailyTotals, di)
+            float sp = array.get(sessionPct, di)
+
+            table.cell(tbl, 0, row, array.get(dates, di),  bgcolor=DATE_BG, text_color=TXT, text_size=_sz)
+            table.cell(tbl, 1, row, f_fmt(gv),  bgcolor=f_color(gv), text_color=TXT, text_size=_sz)
+            table.cell(tbl, 2, row, f_fmt(p1),  bgcolor=f_color(p1), text_color=TXT, text_size=_sz)
+            table.cell(tbl, 3, row, f_fmt(p2),  bgcolor=f_color(p2), text_color=TXT, text_size=_sz)
+            table.cell(tbl, 4, row, f_fmt(p3),  bgcolor=f_color(p3), text_color=TXT, text_size=_sz)
+            table.cell(tbl, 5, row, f_fmt(p4),  bgcolor=f_color(p4), text_color=TXT, text_size=_sz)
+            table.cell(tbl, 6, row, f_fmt(tv),  bgcolor=f_color(tv), text_color=TXT, text_size=_sz)
+            table.cell(tbl, 7, row, f_pct(sp),  bgcolor=f_color(sp), text_color=TXT, text_size=_sz)
+
+        // ====================================================
+        // SUMMARY ROWS — fixed positions after data rows
+        // ====================================================
+        int rL5  = maxDisplayRows + 1
+        int rL10 = maxDisplayRows + 2
+        int rL20 = maxDisplayRows + 3
+        int rYtd = maxDisplayRows + 4
+        int rSig = maxDisplayRows + 5
+        int rAmt = maxDisplayRows + 6
+
+        // Last 5
+        table.cell(tbl, 0, rL5, "Last 5",    bgcolor=SUM5_BG,  text_color=TXT, text_size=_sz)
+        table.cell(tbl, 1, rL5, f_fmt(l5Gap), bgcolor=f_color(l5Gap), text_color=TXT, text_size=_sz)
+        table.cell(tbl, 2, rL5, f_fmt(l5P1),  bgcolor=f_color(l5P1),  text_color=TXT, text_size=_sz)
+        table.cell(tbl, 3, rL5, f_fmt(l5P2),  bgcolor=f_color(l5P2),  text_color=TXT, text_size=_sz)
+        table.cell(tbl, 4, rL5, f_fmt(l5P3),  bgcolor=f_color(l5P3),  text_color=TXT, text_size=_sz)
+        table.cell(tbl, 5, rL5, f_fmt(l5P4),  bgcolor=f_color(l5P4),  text_color=TXT, text_size=_sz)
+        table.cell(tbl, 6, rL5, f_fmt(l5Tot), bgcolor=f_color(l5Tot), text_color=TXT, text_size=_sz)
+        table.cell(tbl, 7, rL5, f_pct(l5Sp),  bgcolor=f_color(l5Sp),  text_color=TXT, text_size=_sz)
+
+        // Last 10
+        table.cell(tbl, 0, rL10, "Last 10",    bgcolor=SUM10_BG, text_color=TXT, text_size=_sz)
+        table.cell(tbl, 1, rL10, f_fmt(l10Gap), bgcolor=f_color(l10Gap), text_color=TXT, text_size=_sz)
+        table.cell(tbl, 2, rL10, f_fmt(l10P1),  bgcolor=f_color(l10P1),  text_color=TXT, text_size=_sz)
+        table.cell(tbl, 3, rL10, f_fmt(l10P2),  bgcolor=f_color(l10P2),  text_color=TXT, text_size=_sz)
+        table.cell(tbl, 4, rL10, f_fmt(l10P3),  bgcolor=f_color(l10P3),  text_color=TXT, text_size=_sz)
+        table.cell(tbl, 5, rL10, f_fmt(l10P4),  bgcolor=f_color(l10P4),  text_color=TXT, text_size=_sz)
+        table.cell(tbl, 6, rL10, f_fmt(l10Tot), bgcolor=f_color(l10Tot), text_color=TXT, text_size=_sz)
+        table.cell(tbl, 7, rL10, f_pct(l10Sp),  bgcolor=f_color(l10Sp),  text_color=TXT, text_size=_sz)
+
+        // Last 20
+        table.cell(tbl, 0, rL20, "Last 20",    bgcolor=SUM20_BG, text_color=TXT, text_size=_sz)
+        table.cell(tbl, 1, rL20, f_fmt(l20Gap), bgcolor=f_color(l20Gap), text_color=TXT, text_size=_sz)
+        table.cell(tbl, 2, rL20, f_fmt(l20P1),  bgcolor=f_color(l20P1),  text_color=TXT, text_size=_sz)
+        table.cell(tbl, 3, rL20, f_fmt(l20P2),  bgcolor=f_color(l20P2),  text_color=TXT, text_size=_sz)
+        table.cell(tbl, 4, rL20, f_fmt(l20P3),  bgcolor=f_color(l20P3),  text_color=TXT, text_size=_sz)
+        table.cell(tbl, 5, rL20, f_fmt(l20P4),  bgcolor=f_color(l20P4),  text_color=TXT, text_size=_sz)
+        table.cell(tbl, 6, rL20, f_fmt(l20Tot), bgcolor=f_color(l20Tot), text_color=TXT, text_size=_sz)
+        table.cell(tbl, 7, rL20, f_pct(l20Sp),  bgcolor=f_color(l20Sp),  text_color=TXT, text_size=_sz)
+
+        // YTD
+        string ytdLabel = "YTD " + str.tostring(ytdYear)
+        color  ytdNoData = color.new(color.gray, 80)
+        table.cell(tbl, 0, rYtd, ytdLabel, bgcolor=YTD_BG, text_color=color.black, text_size=_sz)
+        table.cell(tbl, 1, rYtd, ytdCount > 0 ? f_fmt(ytdGap) : "-", bgcolor=ytdCount > 0 ? f_color(ytdGap) : ytdNoData, text_color=TXT, text_size=_sz)
+        table.cell(tbl, 2, rYtd, ytdCount > 0 ? f_fmt(ytdP1)  : "-", bgcolor=ytdCount > 0 ? f_color(ytdP1)  : ytdNoData, text_color=TXT, text_size=_sz)
+        table.cell(tbl, 3, rYtd, ytdCount > 0 ? f_fmt(ytdP2)  : "-", bgcolor=ytdCount > 0 ? f_color(ytdP2)  : ytdNoData, text_color=TXT, text_size=_sz)
+        table.cell(tbl, 4, rYtd, ytdCount > 0 ? f_fmt(ytdP3)  : "-", bgcolor=ytdCount > 0 ? f_color(ytdP3)  : ytdNoData, text_color=TXT, text_size=_sz)
+        table.cell(tbl, 5, rYtd, ytdCount > 0 ? f_fmt(ytdP4)  : "-", bgcolor=ytdCount > 0 ? f_color(ytdP4)  : ytdNoData, text_color=TXT, text_size=_sz)
+        table.cell(tbl, 6, rYtd, ytdCount > 0 ? f_fmt(ytdTot) : "-", bgcolor=ytdCount > 0 ? f_color(ytdTot) : ytdNoData, text_color=TXT, text_size=_sz)
+        table.cell(tbl, 7, rYtd, ytdCount > 0 ? f_pct(ytdSp)  : "-", bgcolor=ytdCount > 0 ? f_color(ytdSp)  : ytdNoData, text_color=TXT, text_size=_sz)
+
+        // ====================================================
+        // SIGNAL ROW
+        // col0 = label
+        // col1 = Sess (5/10/20d avg)    col5 = Sess score x/3
+        // col2 = C-10 (5/10/20d avg)   col6 = C10  score x/3
+        // col3 = C-11 (5/10/20d avg)   col7 = C11  score x/3
+        // col4 = Total score x/9
+        // ====================================================
+        string sessTxt = "Sess:\n" + f_pct(sess5) + "\n" + f_pct(sess10) + "\n" + f_pct(sess20)
+        string c10Txt  = "C-10:\n" + f_pct(c10_5) + "\n" + f_pct(c10_10) + "\n" + f_pct(c10_20)
+        string c11Txt  = "C-11:\n" + f_pct(c11_5) + "\n" + f_pct(c11_10) + "\n" + f_pct(c11_20)
+        string scoreTxt = "Score\n" + str.tostring(totalScore) + " / 9"
+
+        table.cell(tbl, 0, rSig, "RAD\n5/10/20d",       bgcolor=SIG_BG,                        text_color=color.white, text_size=_sz)
+        table.cell(tbl, 1, rSig, sessTxt,                bgcolor=f_scoreColor(sessScore, 3),     text_size=_sz)
+        table.cell(tbl, 2, rSig, c10Txt,                 bgcolor=f_scoreColor(c10Score, 3),      text_size=_sz)
+        table.cell(tbl, 3, rSig, c11Txt,                 bgcolor=f_scoreColor(c11Score, 3),      text_size=_sz)
+        table.cell(tbl, 4, rSig, scoreTxt,               bgcolor=f_scoreColor(totalScore, 9),    text_size=_sz)
+        table.cell(tbl, 5, rSig, str.tostring(sessScore) + "/3",  bgcolor=f_scoreColor(sessScore, 3),  text_size=_sz)
+        table.cell(tbl, 6, rSig, str.tostring(c10Score)  + "/3",  bgcolor=f_scoreColor(c10Score, 3),   text_size=_sz)
+        table.cell(tbl, 7, rSig, str.tostring(c11Score)  + "/3",  bgcolor=f_scoreColor(c11Score, 3),   text_size=_sz)
+
+        // ====================================================
+        // ANALYSIS ROW  (over displayed window)
+        // Gap | Amateur (P1) | Middle (P3) | Smart (P2+P4)
+        // ====================================================
+        float anGap    = 0.0
+        float anP1     = 0.0
+        float anP2     = 0.0
+        float anP3     = 0.0
+        float anP4     = 0.0
+        for i = 0 to displayCount - 1
+            int di2 = startIdx + i
+            anGap := anGap + array.get(gapValues, di2)
+            anP1  := anP1  + array.get(period1,   di2)
+            anP2  := anP2  + array.get(period2,   di2)
+            anP3  := anP3  + array.get(period3,   di2)
+            anP4  := anP4  + array.get(period4,   di2)
+
+        float anSmart  = anP2 + anP4   // 10-11am + 2-4pm
+
+        table.cell(tbl, 0, rAmt, "Analys\n(" + str.tostring(displayCount) + "d)", bgcolor=AMT_BG,          text_color=TXT, text_size=_sz)
+        table.cell(tbl, 1, rAmt, "Gap\n"          + f_fmt(anGap),    bgcolor=f_color(anGap),    text_color=TXT, text_size=_sz)
+        table.cell(tbl, 2, rAmt, "Amateur\n(P1)\n" + f_fmt(anP1),    bgcolor=f_color(anP1),     text_color=TXT, text_size=_sz)
+        table.cell(tbl, 3, rAmt, "Middle\n(P3)\n"  + f_fmt(anP3),    bgcolor=f_color(anP3),     text_color=TXT, text_size=_sz)
+        table.cell(tbl, 4, rAmt, "Smart\n(P2+P4)\n" + f_fmt(anSmart), bgcolor=f_color(anSmart), text_color=TXT, text_size=_sz)
+        table.cell(tbl, 5, rAmt, "",  bgcolor=AMT_BG, text_size=_sz)
+        table.cell(tbl, 6, rAmt, "",  bgcolor=AMT_BG, text_size=_sz)
+        table.cell(tbl, 7, rAmt, "",  bgcolor=AMT_BG, text_size=_sz)
+
+    else
+        // No data yet — debug info
+        string dbg = "No data yet\n"
+        dbg := dbg + "Time: " + str.tostring(hour) + ":" + str.tostring(minute) + "\n"
+        dbg := dbg + "Prev close: " + f_fmt(dailyClose) + "\n"
+        dbg := dbg + "9:30: "  + f_fmt(price930)  + "  10:00: " + f_fmt(price1000) + "\n"
+        dbg := dbg + "11:00: " + f_fmt(price1100) + "  14:00: " + f_fmt(price1400) + "\n"
+        dbg := dbg + "Waiting for 16:00 to record first day..."
+        table.cell(tbl, 0, 1, dbg, text_size=_sz, text_color=color.orange)
+        table.merge_cells(tbl, 0, 1, 7, 1)
+
+// Required for non-overlay indicators
+plot(na, title="Placeholder")

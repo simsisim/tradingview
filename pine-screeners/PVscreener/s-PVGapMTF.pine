@@ -1,58 +1,91 @@
 // This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
-// © 2026 s-PV Gap Screener
+// © 2026 s-PV Gap Screener MTF
 //
 // @description
 // Multi-signal screener combining trend-filtered price/volume breakouts with dual-threshold gap detection.
+// Supports Daily and Weekly timeframes with auto-scaled parameters.
 // Inspired by TradeDots' Price and Volume Breakout Buy Strategy:
 // https://www.tradingview.com/script/jc2hs2qK-Price-and-Volume-Breakout-Buy-Strategy-TradeDots/
 //
 // @features
-// - Price & Volume breakout detection (long and short, with 200 SMA trend filter)
-// - Dual gap detection (customizable 5% and 10% thresholds)
-// - 19 screener output columns
+// - Price & Volume breakout detection (long and short, with SMA trend filter)
+// - Dual gap detection (customizable thresholds, auto-adjusted per timeframe)
+// - Auto-scaling of all bar-count parameters for Daily vs Weekly
+// - 20 screener output columns (19 signals + 1 timeframe validity flag)
 // - Combined scoring system (0-80)
 // - Fully customizable parameters
 //
 // @usage
-// 1. Add to DAILY chart
-// 2. Configure settings (or use defaults)
+// 1. Add to DAILY or WEEKLY chart
+// 2. Configure settings (or use defaults — they are Daily-based and auto-scaled for Weekly)
 // 3. Add to Pine Screener: https://www.tradingview.com/pine-screener/
-// 4. Filter and sort by Combined Score
+// 4. Set screener timeframe to Daily or Weekly
+// 5. Filter and sort by Combined Score
 //
-// IMPORTANT: Use on DAILY timeframe for accurate analysis
+// IMPORTANT: Only Daily and Weekly timeframes are supported.
+// Use the "Is Supported TF" screener column to filter out unsupported timeframes.
 
 //@version=6
-indicator("s-PV Gap Screener", shorttitle="s-PVG", overlay=true, max_bars_back=101)
+indicator("s-PV Gap Screener MTF", shorttitle="s-PVG-MTF", overlay=true, max_bars_back=101)
 
 // ============================================================================
-// INPUTS - All configurable parameters
+// TIMEFRAME DETECTION
+// ============================================================================
+
+is_daily  = timeframe.isdaily
+is_weekly = timeframe.isweekly
+is_supported_tf = is_daily or is_weekly
+
+// Scale factor: Weekly bars are ~5x Daily bars
+tf_scale = is_weekly ? 5 : 1
+
+// ============================================================================
+// INPUTS - All configurable parameters (enter as Daily-equivalent values)
 // ============================================================================
 
 // GROUP 1: PRICE & VOLUME BREAKOUT
 var g1 = "Price & Volume Breakout"
 enable_pv = input.bool(true, "Enable PV Breakout Scanning", group=g1)
-price_period = input.int(60, "Price Breakout Period", minval=10, maxval=500,
-     group=g1, tooltip="Number of bars to compare for highest/lowest price")
-volume_period = input.int(60, "Volume Breakout Period", minval=10, maxval=500,
-     group=g1, tooltip="Number of bars to compare for highest volume")
-sma_length = input.int(200, "Trend Filter SMA", minval=20, maxval=500,
-     group=g1, tooltip="Moving average for trend confirmation (above=bullish, below=bearish)")
+price_period = input.int(60, "Price Breakout Period (Daily bars)", minval=10, maxval=500,
+     group=g1, tooltip="Number of daily bars to compare for highest/lowest price. Auto-scaled to weeks on weekly chart.")
+volume_period = input.int(60, "Volume Breakout Period (Daily bars)", minval=10, maxval=500,
+     group=g1, tooltip="Number of daily bars to compare for highest volume. Auto-scaled to weeks on weekly chart.")
+sma_length = input.int(200, "Trend Filter SMA (Daily bars)", minval=20, maxval=500,
+     group=g1, tooltip="Moving average for trend confirmation. 200 daily = 40 weekly. Auto-scaled.")
 pv_lookback = input.int(100, "Search Last N Days", minval=1, maxval=500,
-     group=g1, tooltip="How far back to scan for breakout events")
+     group=g1, tooltip="How far back to scan for breakout events (in daily bars). Auto-scaled to weeks on weekly chart.")
 pv_direction = input.string("Both", "Breakout Direction", options=["Long Only", "Short Only", "Both"],
      group=g1, tooltip="Filter for long/short breakouts")
 
 // GROUP 2: GAP DETECTION
 var g2 = "Gap Detection"
 enable_gaps = input.bool(true, "Enable Gap Scanning", group=g2)
-gap_threshold_1 = input.float(5.0, "Gap Threshold 1 (%)", minval=0.1, maxval=30.0,
-     step=0.5, group=g2, tooltip="First gap threshold (default 5%)")
-gap_threshold_2 = input.float(10.0, "Gap Threshold 2 (%)", minval=0.1, maxval=30.0,
-     step=0.5, group=g2, tooltip="Second gap threshold (default 10%)")
+gap_threshold_1 = input.float(5.0, "Gap Threshold 1 - Daily (%)", minval=0.1, maxval=30.0,
+     step=0.5, group=g2, tooltip="First gap threshold for Daily charts (default 5%). Weekly uses a separate lower threshold.")
+gap_threshold_2 = input.float(10.0, "Gap Threshold 2 - Daily (%)", minval=0.1, maxval=30.0,
+     step=0.5, group=g2, tooltip="Second gap threshold for Daily charts (default 10%). Weekly uses a separate lower threshold.")
+gap_threshold_1w = input.float(2.0, "Gap Threshold 1 - Weekly (%)", minval=0.1, maxval=30.0,
+     step=0.5, group=g2, tooltip="First gap threshold for Weekly charts (default 2%). Weekly gaps are rarer so thresholds are lower.")
+gap_threshold_2w = input.float(5.0, "Gap Threshold 2 - Weekly (%)", minval=0.1, maxval=30.0,
+     step=0.5, group=g2, tooltip="Second gap threshold for Weekly charts (default 5%). Weekly gaps are rarer so thresholds are lower.")
 gap_direction = input.string("Both", "Gap Direction", options=["Up Only", "Down Only", "Both"],
      group=g2, tooltip="Filter gap direction")
 gap_lookback = input.int(100, "Search Last N Days", minval=1, maxval=500,
-     group=g2, tooltip="How far back to scan for gap events")
+     group=g2, tooltip="How far back to scan for gap events (in daily bars). Auto-scaled to weeks on weekly chart.")
+
+// ============================================================================
+// AUTO-SCALED PARAMETERS
+// ============================================================================
+
+price_period_scaled  = math.max(1, math.round(price_period  / tf_scale))
+volume_period_scaled = math.max(1, math.round(volume_period / tf_scale))
+sma_length_scaled    = math.max(1, math.round(sma_length    / tf_scale))
+pv_lookback_scaled   = math.max(1, math.round(pv_lookback   / tf_scale))
+gap_lookback_scaled  = math.max(1, math.round(gap_lookback  / tf_scale))
+
+// Gap thresholds: separate values per timeframe (no scaling — different market dynamics)
+active_gap_threshold_1 = is_weekly ? gap_threshold_1w : gap_threshold_1
+active_gap_threshold_2 = is_weekly ? gap_threshold_2w : gap_threshold_2
 
 // ============================================================================
 // HELPER FUNCTIONS
@@ -69,11 +102,11 @@ timeToYYYYMMDD(int t) =>
 // PRICE & VOLUME BREAKOUT LOGIC
 // ============================================================================
 
-// Calculate breakout levels
-price_highest = ta.highest(high, price_period)
-price_lowest = ta.lowest(low, price_period)
-volume_highest = ta.highest(volume, volume_period)
-sma_trend = ta.sma(close, sma_length)
+// Calculate breakout levels using scaled periods
+price_highest = ta.highest(high, price_period_scaled)
+price_lowest  = ta.lowest(low, price_period_scaled)
+volume_highest = ta.highest(volume, volume_period_scaled)
+sma_trend = ta.sma(close, sma_length_scaled)
 
 // Initialize variables for tracking breakouts
 var float pv_long_days_ago = na
@@ -88,30 +121,28 @@ if enable_pv
     long_found = false
     short_found = false
 
-    for i = 0 to pv_lookback - 1
+    for i = 0 to pv_lookback_scaled - 1
         if not long_found and (pv_direction == "Long Only" or pv_direction == "Both")
-            // Check for long breakout: close > highest high AND volume > highest volume AND above SMA
-            historical_long = close[i] > ta.highest(high, price_period)[i+1] and
-                             volume[i] > ta.highest(volume, volume_period)[i+1] and
-                             close[i] > ta.sma(close, sma_length)[i]
+            historical_long = close[i] > ta.highest(high, price_period_scaled)[i+1] and
+                             volume[i] > ta.highest(volume, volume_period_scaled)[i+1] and
+                             close[i] > ta.sma(close, sma_length_scaled)[i]
 
             if historical_long
                 long_found := true
                 pv_long_days_ago := i
                 pv_long_date := timeToYYYYMMDD(time[i])
-                pv_long_strength := (close[i] - ta.highest(high, price_period)[i+1]) / ta.highest(high, price_period)[i+1] * 100
+                pv_long_strength := (close[i] - ta.highest(high, price_period_scaled)[i+1]) / ta.highest(high, price_period_scaled)[i+1] * 100
 
         if not short_found and (pv_direction == "Short Only" or pv_direction == "Both")
-            // Check for short breakout: close < lowest low AND volume > highest volume AND below SMA
-            historical_short = close[i] < ta.lowest(low, price_period)[i+1] and
-                              volume[i] > ta.highest(volume, volume_period)[i+1] and
-                              close[i] < ta.sma(close, sma_length)[i]
+            historical_short = close[i] < ta.lowest(low, price_period_scaled)[i+1] and
+                              volume[i] > ta.highest(volume, volume_period_scaled)[i+1] and
+                              close[i] < ta.sma(close, sma_length_scaled)[i]
 
             if historical_short
                 short_found := true
                 pv_short_days_ago := i
                 pv_short_date := timeToYYYYMMDD(time[i])
-                pv_short_strength := (ta.lowest(low, price_period)[i+1] - close[i]) / ta.lowest(low, price_period)[i+1] * 100
+                pv_short_strength := (ta.lowest(low, price_period_scaled)[i+1] - close[i]) / ta.lowest(low, price_period_scaled)[i+1] * 100
 
     // Reset if not found
     if not long_found
@@ -133,14 +164,12 @@ pv_type = 0.0  // 1 = long, -1 = short, 0 = none
 
 if not na(pv_long_days_ago) or not na(pv_short_days_ago)
     if na(pv_short_days_ago) or (not na(pv_long_days_ago) and pv_long_days_ago < pv_short_days_ago)
-        // Long breakout is more recent
         pv_breakout_flag := 1
         pv_days_ago := pv_long_days_ago
         pv_date := pv_long_date
         pv_strength := pv_long_strength
         pv_type := 1
     else
-        // Short breakout is more recent
         pv_breakout_flag := 1
         pv_days_ago := pv_short_days_ago
         pv_date := pv_short_date
@@ -148,14 +177,13 @@ if not na(pv_long_days_ago) or not na(pv_short_days_ago)
         pv_type := -1
 
 // Additional PV metrics
-volume_ratio = volume / ta.sma(volume, volume_period)
+volume_ratio = volume / ta.sma(volume, volume_period_scaled)
 price_vs_sma_pct = (close - sma_trend) / sma_trend * 100
 
 // ============================================================================
 // GAP DETECTION LOGIC
 // ============================================================================
 
-// Initialize variables for gap tracking
 var float gap1_days_ago = na
 var float gap1_date = na
 var float gap1_size = na
@@ -166,38 +194,32 @@ var float gap2_date = na
 var float gap2_size = na
 var float gap2_direction = na
 
-// Scan for gaps in recent history
 if enable_gaps
     gap1_found = false
     gap2_found = false
 
-    for i = 1 to gap_lookback
-        // Calculate gap percentage
+    for i = 1 to gap_lookback_scaled
         gap_pct = (open[i] - close[i+1]) / close[i+1] * 100
         gap_abs = math.abs(gap_pct)
 
-        // Check direction filter
         direction_ok = gap_direction == "Both" or
                       (gap_direction == "Up Only" and gap_pct > 0) or
                       (gap_direction == "Down Only" and gap_pct < 0)
 
-        // Check for threshold 1
-        if not gap1_found and gap_abs >= gap_threshold_1 and direction_ok
+        if not gap1_found and gap_abs >= active_gap_threshold_1 and direction_ok
             gap1_found := true
             gap1_days_ago := i
             gap1_date := timeToYYYYMMDD(time[i])
             gap1_size := gap_pct
             gap1_direction := gap_pct > 0 ? 1 : -1
 
-        // Check for threshold 2
-        if not gap2_found and gap_abs >= gap_threshold_2 and direction_ok
+        if not gap2_found and gap_abs >= active_gap_threshold_2 and direction_ok
             gap2_found := true
             gap2_days_ago := i
             gap2_date := timeToYYYYMMDD(time[i])
             gap2_size := gap_pct
             gap2_direction := gap_pct > 0 ? 1 : -1
 
-    // Reset if not found
     if not gap1_found
         gap1_days_ago := na
         gap1_date := na
@@ -218,10 +240,8 @@ gap2_flag = not na(gap2_days_ago) ? 1.0 : 0.0
 // COMPOSITE SIGNALS
 // ============================================================================
 
-// Any signal flag (useful for quick filtering)
 any_signal = (pv_breakout_flag == 1 or gap1_flag == 1 or gap2_flag == 1) ? 1 : 0
 
-// Combined score (weighted)
 combined_score = 0.0
 if pv_breakout_flag == 1
     combined_score += 30
@@ -231,12 +251,15 @@ if gap2_flag == 1
     combined_score += 30
 
 // ============================================================================
-// SCREENER OUTPUTS - All plot() values become screener columns
+// SCREENER OUTPUTS
 // ============================================================================
+
+// Timeframe validity — filter on this first in the screener (1 = Daily or Weekly, 0 = unsupported)
+plot(is_supported_tf ? 1 : 0, "Is Supported TF", display=display.all)
 
 // Price & Volume Breakout Outputs
 plot(pv_breakout_flag, "PV Breakout Flag", display=display.all)
-plot(pv_days_ago, "PV Days Ago", display=display.all)
+plot(pv_days_ago, "PV Bars Ago", display=display.all)
 plot(pv_date, "PV Breakout Date", display=display.all)
 plot(pv_strength, "PV Strength %", display=display.all)
 plot(pv_type, "PV Type", display=display.all)  // 1=long, -1=short, 0=none
@@ -245,14 +268,14 @@ plot(price_vs_sma_pct, "Price vs SMA %", display=display.all)
 
 // Gap Detection Outputs - Threshold 1
 plot(gap1_flag, "Gap1 Flag", display=display.all)
-plot(gap1_days_ago, "Gap1 Days Ago", display=display.all)
+plot(gap1_days_ago, "Gap1 Bars Ago", display=display.all)
 plot(gap1_date, "Gap1 Date", display=display.all)
 plot(gap1_size, "Gap1 Size %", display=display.all)
 plot(gap1_direction, "Gap1 Direction", display=display.all)  // 1=up, -1=down
 
 // Gap Detection Outputs - Threshold 2
 plot(gap2_flag, "Gap2 Flag", display=display.all)
-plot(gap2_days_ago, "Gap2 Days Ago", display=display.all)
+plot(gap2_days_ago, "Gap2 Bars Ago", display=display.all)
 plot(gap2_date, "Gap2 Date", display=display.all)
 plot(gap2_size, "Gap2 Size %", display=display.all)
 plot(gap2_direction, "Gap2 Direction", display=display.all)  // 1=up, -1=down
@@ -265,7 +288,6 @@ plot(combined_score, "Combined Score", display=display.all)
 // VISUAL ELEMENTS (for individual chart viewing, not screener)
 // ============================================================================
 
-// Background colors
 bgcolor(pv_breakout_flag == 1 and pv_type == 1 ? color.new(color.green, 95) :
        pv_breakout_flag == 1 and pv_type == -1 ? color.new(color.red, 95) : na,
        title="PV Breakout Background")
@@ -273,7 +295,6 @@ bgcolor(pv_breakout_flag == 1 and pv_type == 1 ? color.new(color.green, 95) :
 bgcolor(gap2_flag == 1 ? color.new(color.orange, 95) : na,
        title="Major Gap Background")
 
-// Shape markers
 plotshape(pv_breakout_flag == 1 and pv_type == 1, "Long Breakout",
          style=shape.triangleup, location=location.bottom,
          color=color.green, size=size.small)
@@ -290,7 +311,6 @@ plotshape(gap2_flag == 1 and gap2_direction == -1, "Major Gap Down",
          style=shape.diamond, location=location.top,
          color=color.orange, size=size.tiny)
 
-// Reference lines
 hline(0, "Zero Line", color=color.gray, linestyle=hline.style_dashed)
 hline(1, "Signal Line", color=color.white, linestyle=hline.style_dotted)
 
@@ -298,75 +318,91 @@ hline(1, "Signal Line", color=color.white, linestyle=hline.style_dotted)
 // INFORMATION TABLE (for individual chart viewing)
 // ============================================================================
 
-var table info_table = table.new(position.top_right, 2, 8,
+var table info_table = table.new(position.top_right, 2, 10,
      bgcolor=color.new(color.black, 80), border_width=1, border_color=color.gray)
 
 if barstate.islast
     table.cell(info_table, 0, 0, "Metric", text_color=color.white, bgcolor=color.new(color.gray, 50))
     table.cell(info_table, 1, 0, "Value", text_color=color.white, bgcolor=color.new(color.gray, 50))
 
+    // Timeframe info
+    tf_label = is_daily ? "Daily" : is_weekly ? "Weekly" : "UNSUPPORTED"
+    tf_color = is_supported_tf ? color.green : color.red
+    table.cell(info_table, 0, 1, "Timeframe", text_color=color.white)
+    table.cell(info_table, 1, 1, tf_label, text_color=tf_color)
+
+    // Effective SMA being used
+    table.cell(info_table, 0, 2, "Effective SMA", text_color=color.white)
+    table.cell(info_table, 1, 2, str.tostring(sma_length_scaled) + (is_weekly ? "w" : "d"), text_color=color.yellow)
+
     // PV Breakout
-    table.cell(info_table, 0, 1, "PV Breakout", text_color=color.white)
-    table.cell(info_table, 1, 1,
+    table.cell(info_table, 0, 3, "PV Breakout", text_color=color.white)
+    table.cell(info_table, 1, 3,
          pv_breakout_flag == 1 ? (pv_type == 1 ? "LONG ✓" : "SHORT ✓") : "No",
          text_color=pv_breakout_flag == 1 ? (pv_type == 1 ? color.green : color.red) : color.gray)
 
-    table.cell(info_table, 0, 2, "PV Days Ago", text_color=color.white)
-    table.cell(info_table, 1, 2,
+    table.cell(info_table, 0, 4, "PV Bars Ago", text_color=color.white)
+    table.cell(info_table, 1, 4,
          not na(pv_days_ago) ? str.tostring(pv_days_ago, "#") : "N/A",
          text_color=color.yellow)
 
     // Gap 1
-    table.cell(info_table, 0, 3, "Gap " + str.tostring(gap_threshold_1, "#.#") + "%", text_color=color.white)
-    table.cell(info_table, 1, 3,
+    table.cell(info_table, 0, 5, "Gap " + str.tostring(active_gap_threshold_1, "#.#") + "%", text_color=color.white)
+    table.cell(info_table, 1, 5,
          gap1_flag == 1 ? str.tostring(gap1_size, "#.##") + "%" : "No",
          text_color=gap1_flag == 1 ? color.orange : color.gray)
 
-    table.cell(info_table, 0, 4, "Gap1 Days Ago", text_color=color.white)
-    table.cell(info_table, 1, 4,
+    table.cell(info_table, 0, 6, "Gap1 Bars Ago", text_color=color.white)
+    table.cell(info_table, 1, 6,
          not na(gap1_days_ago) ? str.tostring(gap1_days_ago, "#") : "N/A",
          text_color=color.yellow)
 
     // Gap 2
-    table.cell(info_table, 0, 5, "Gap " + str.tostring(gap_threshold_2, "#.#") + "%", text_color=color.white)
-    table.cell(info_table, 1, 5,
+    table.cell(info_table, 0, 7, "Gap " + str.tostring(active_gap_threshold_2, "#.#") + "%", text_color=color.white)
+    table.cell(info_table, 1, 7,
          gap2_flag == 1 ? str.tostring(gap2_size, "#.##") + "%" : "No",
          text_color=gap2_flag == 1 ? color.orange : color.gray)
 
-    table.cell(info_table, 0, 6, "Gap2 Days Ago", text_color=color.white)
-    table.cell(info_table, 1, 6,
+    table.cell(info_table, 0, 8, "Gap2 Bars Ago", text_color=color.white)
+    table.cell(info_table, 1, 8,
          not na(gap2_days_ago) ? str.tostring(gap2_days_ago, "#") : "N/A",
          text_color=color.yellow)
 
     // Combined Score
-    table.cell(info_table, 0, 7, "Combined Score", text_color=color.white)
-    table.cell(info_table, 1, 7, str.tostring(combined_score, "#"),
+    table.cell(info_table, 0, 9, "Combined Score", text_color=color.white)
+    table.cell(info_table, 1, 9, str.tostring(combined_score, "#"),
          text_color=combined_score >= 60 ? color.green : combined_score >= 30 ? color.yellow : color.gray)
 
 // ============================================================================
 // USAGE INSTRUCTIONS
 // ============================================================================
 //
+// TIMEFRAME SUPPORT:
+// - Daily:  all inputs used as-is (price_period=60d, sma=200d, lookback=100d)
+// - Weekly: all bar-count inputs auto-divided by 5 (price_period=13w, sma=40w, lookback=20w)
+// - Gap thresholds NOT scaled — separate Weekly inputs provided (default 2% / 5%)
+// - Unsupported timeframes: "Is Supported TF" screener column returns 0
+//
 // PINE SCREENER SETUP:
-// 1. Add this indicator to a DAILY chart
-// 2. Configure input settings (periods, thresholds)
+// 1. Add this indicator to a Daily or Weekly chart
+// 2. Configure input settings (all values in Daily-equivalent bars)
 // 3. Open Pine Screener: https://www.tradingview.com/pine-screener/
-// 4. Add this indicator to screener columns
-// 5. Use filters and sorting to find opportunities
+// 4. Set screener timeframe to Daily or Weekly
+// 5. Add "Is Supported TF = 1" as a baseline filter
+// 6. Use filters and sorting to find opportunities
 //
 // EXAMPLE FILTERS:
-// - Recent breakouts: PV Breakout Flag = 1 AND PV Days Ago <= 5
-// - Big gaps: Gap2 Flag = 1 AND Gap2 Days Ago <= 10
-// - Long setups: PV Type = 1 AND Gap1 Direction = 1
-// - High conviction: Combined Score >= 60 (max 80: PV=30 + Gap1=20 + Gap2=30)
-// - Strong gaps with momentum: Gap2 Flag = 1 AND PV Breakout Flag = 1
+// - Valid timeframe only:    Is Supported TF = 1
+// - Recent breakouts:        PV Breakout Flag = 1 AND PV Bars Ago <= 5
+// - Big gaps:                Gap2 Flag = 1 AND Gap2 Bars Ago <= 10
+// - Long setups:             PV Type = 1 AND Gap1 Direction = 1
+// - High conviction:         Combined Score >= 60
 //
 // DATE FORMAT:
 // - Dates shown as YYYYMMDD (e.g., 20,260,127.00 = Jan 27, 2026)
-// - Ignore commas and decimals, read as: 2026/01/27
 //
 // LIMITATIONS:
-// - 500-bar historical limit (~2 years on daily charts)
+// - Only Daily and Weekly timeframes supported
+// - 500-bar historical limit (~2 years daily, ~10 years weekly)
 // - Same settings apply to all symbols in screener
-// - Best used on liquid stocks with consistent volume
 //
