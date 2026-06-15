@@ -1,0 +1,41 @@
+//@version=6
+indicator('TradingCharts SCTR [Bginvestor]', overlay = false)
+
+//  The StockCharts Technical Rank (SCTR), conceived by technical analyst John Murphy, 
+//  emerges as a pivotal tool in evaluating a stock’s technical prowess. This numerical 
+//  system, colloquially known as “scooter,” gauges a stock’s strength within various groups, 
+//  employing six key technical indicators across different time frames.
+//  Note: This indicator was reversed engineered and a close match wrt TradingCharts SCTR.
+
+tableOn = input.bool(true, title = "Show SCTR table value", tooltip=' No Input Required ; SCTR uses fixed values')
+line = input.int(75, title = "reference line")
+
+// Calculate PPO components
+fast_ma = ta.sma(close, 12)
+slow_ma = ta.sma(close, 26)
+ppo = (fast_ma - slow_ma) / slow_ma * 100
+signal = ta.sma(ppo, 9)
+ppo_hist = ppo - signal
+
+// Equations
+var1 = ((close - ta.ema(close, 200)) / ta.ema(close, 200)) * 100   //  Percent above/below the 200-day exponential moving average (EMA)
+var2 = ta.roc(close, 125)                                          //  125-day rate-of-change (ROC) 
+var3 = ((close - ta.ema(close, 50)) / ta.ema(close, 50)) * 100     //  Percent above/below 50-day EMA
+var4 = ta.roc(close, 20)                                           //  20-day rate-of-change
+var5 = ((ppo_hist - ppo_hist[2]) / 3)                              //  Three-day slope of percentage price oscillator histogram divided by three
+var6 = ta.rsi(close, 14) -50                                       //  Relative strength index
+
+// SCTR Calculation
+SCTR = 50 + (2.5 *(0.60*((var1 +var2)/2) + 0.30*((var3 +var4)/2) + 0.10*((var5 +var6)/2))) 
+SCTRV = SCTR >= 0 and SCTR <= 99.9 ? SCTR : SCTR > 99.9 ? 99.9 : SCTR < 0 ? 0 : na
+
+// Plot functions
+plot(SCTRV, color = #01060a, title = 'SCTR', linewidth = 2)
+plot(line , color = color.rgb(17, 17, 240), linewidth = 1)
+
+if barstate.islast and tableOn
+    var table atrDisplay = table.new(position.top_right, 1, 1, bgcolor = color.gray, frame_width = 2, frame_color = color.black)
+    table.cell(atrDisplay, 0, 0, str.tostring(SCTRV, format.mintick), text_color = color.white)
+
+// ref: https://www.investopedia.com/terms/s/stockcharts-technical-rank-sctr.asp
+

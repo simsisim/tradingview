@@ -1,0 +1,74 @@
+//@version=5
+
+// © iamsumitkoul
+indicator("SCTR - Absolute", shorttitle="Absolute SCTR", overlay=false)
+
+// Input Settings
+sctr_color = input.color(color.blue, "SCTR Line Color", group="Display Options")
+sctr_width = input.int(2, "SCTR Line Width", minval=1, maxval=5, group="Display Options")
+
+// Long-Term Indicators (60% weighting)
+// 1. Percent above/below 200-day EMA (30% weighting)
+ema_200 = ta.ema(close, 200)
+pct_above_ema_200 = ((close - ema_200) / ema_200) * 100
+long_term_1 = pct_above_ema_200 * 0.30
+
+// 2. 125-Day Rate-of-Change (30% weighting)
+roc_125 = ((close - close) / close) * 100
+long_term_2 = roc_125 * 0.30
+
+// Medium-Term Indicators (30% weighting)
+// 3. Percent above/below 50-day EMA (15% weighting)
+ema_50 = ta.ema(close, 50)
+pct_above_ema_50 = ((close - ema_50) / ema_50) * 100
+medium_term_1 = pct_above_ema_50 * 0.15
+
+// 4. 20-day Rate-of-Change (15% weighting)
+roc_20 = ((close - close) / close) * 100
+medium_term_2 = roc_20 * 0.15
+
+// Short-Term Indicators (10% weighting)
+// 5. 3-day slope of PPO(12,26,9) Histogram/3 (5% weighting)
+// 5a. calculate PPO
+fast_ema = ta.ema(close, 12)
+slow_ema = ta.ema(close, 26)
+ppo_line = ((fast_ema - slow_ema) / slow_ema) * 100
+ppo_signal = ta.ema(ppo_line, 9)
+ppo_histogram = ppo_line - ppo_signal
+
+// 5b. Calculate 3-day slope of PPO Histogram divided by 3
+// Using linear regression slope calculation over 3 periods
+ppo_hist_3 = ppo_histogram / 3  // Divide histogram by 3 as specified
+slope_3_day = (ppo_hist_3 - ppo_hist_3) / 3  // 3-day slope calculation
+
+// 5c.Apply special PPO Histogram slope logic
+ppo_contribution = if slope_3_day > 1
+    5.0  // +45 degrees, contribute 5 points
+else if slope_3_day < -1
+    0.0  // -45 degrees, contribute 0 points
+else
+    0.05 * ((slope_3_day + 1) * 50)  // 5% of ((Slope + 1) x 50)
+
+short_term_1 = ppo_contribution
+
+// 6. 14-day RSI (5% weighting)
+rsi_14 = ta.rsi(close, 14)
+short_term_2 = rsi_14 * 0.05
+
+// Calculate Total SCTR Score
+sctr_score = long_term_1 + long_term_2 + medium_term_1 + medium_term_2 + short_term_1 + short_term_2
+
+// Plot SCTR Line
+plot(sctr_score, title="SCTR Score", color=sctr_color, linewidth=sctr_width)
+
+// Add reference lines
+hline(0, "Zero Line", color=color.rgb(70, 71, 76), linestyle=hline.style_dashed)
+hline(7, "Pivotline", color=color.rgb(95, 219, 228), linestyle=hline.style_solid)
+hline(9, "Pivotline", color=color.rgb(115, 95, 228), linestyle=hline.style_solid)
+
+// Add alerts for significant SCTR movements
+alertcondition(ta.crossover(sctr_score, 9), title="SCTR Above 9", message="SCTR crossed above 9")
+alertcondition(ta.crossover(sctr_score, 7), title="SCTR Above 7", message="SCTR crossed above 7")
+alertcondition(ta.crossunder(sctr_score, 4), title="SCTR Below 4", message="SCTR crossed below 4")
+alertcondition(ta.crossunder(sctr_score, 0), title="SCTR Below 0", message="SCTR crossed below zero line")
+

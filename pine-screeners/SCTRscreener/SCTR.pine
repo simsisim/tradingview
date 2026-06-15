@@ -1,0 +1,215 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © SCTR
+//
+// @description
+// StockCharts Technical Rank (SCTR), John Murphy's formula.
+// Outputs 12 sortable columns across three analytical approaches:
+//   0 — SCTR         : absolute score 0–99.9 (centered at 50, for chart readability)
+//   0 — SCTR Raw     : pre-scaling weighted average (sort by this in screener for true rank order)
+//   A — SCTR Deltas  : how fast the rank is changing (1D / 5D / 1M / 3M)
+//   B — Sub-scores   : which time horizon drives the rank (LT / MT / ST)
+//   C — Scaled SCTR  : same formula, compressed parameters (3M / 1M / 1W)
+//
+// See SCTR-Screener-Model.md in this folder for full mathematical documentation.
+//
+// @usage
+// 1. Add to a Daily chart
+// 2. Open Pine Screener (Products > Screeners > Pine)
+// 3. Select your watchlist and this indicator
+// 4. Sort or filter by any column
+//
+// Base formula: TradingCharts absolute-score version (NOT the Absolute version which has ROC bugs)
+// PPO slope: (hist - hist[3]) / 3  per official ChartSchool "3-day slope" definition; clamped ±50
+// Reference: https://www.investopedia.com/terms/s/stockcharts-technical-rank-sctr.asp
+// Reference: https://chartschool.stockcharts.com/table-of-contents/technical-indicators-and-overlays/technical-indicators/stockcharts-technical-rank-sctr
+
+//@version=6
+indicator("SCTR", shorttitle="SCTR", overlay=false)
+
+// ============================================================================
+// STANDARD SCTR — Murphy / TradingCharts formula (~5M horizon)
+//
+// Weights:  Long-term 60% | Medium-term 30% | Short-term 10%
+// Range:    0 – 99.9 (clamped)
+// Centered: a stock perfectly at all moving averages with RSI=50 scores 50
+// ============================================================================
+
+// PPO components (EMA-based, matching StockCharts standard MACD/PPO)
+_ppo_fast   = ta.ema(close, 12)
+_ppo_slow   = ta.ema(close, 26)
+_ppo_line   = (_ppo_fast - _ppo_slow) / _ppo_slow * 100
+_ppo_signal = ta.ema(_ppo_line, 9)
+_ppo_hist   = _ppo_line - _ppo_signal
+
+// Six core variables
+_v1 = ((close - ta.ema(close, 200)) / ta.ema(close, 200)) * 100   // % above/below 200d EMA
+_v2 = ta.roc(close, 125)                                            // 125d ROC (~5 months)
+_v3 = ((close - ta.ema(close, 50))  / ta.ema(close, 50))  * 100   // % above/below 50d EMA
+_v4 = ta.roc(close, 20)                                             // 20d ROC (~1 month)
+_ppo_slope = (_ppo_hist - _ppo_hist[3]) / 3                         // 3d slope of PPO hist: change over 3 bars ÷ 3
+_v5 = math.min(50.0, math.max(-50.0, 50.0 * _ppo_slope))          // clamp to ±50 matching StockCharts angular scale
+_v6 = ta.rsi(close, 14) - 50                                        // RSI(14) centered on zero
+
+_sctr_weighted = 0.60 * ((_v1 + _v2) / 2) +
+                 0.30 * ((_v3 + _v4) / 2) +
+                 0.10 * ((_v5 + _v6) / 2)
+_sctr_raw = 50 + 2.5 * _sctr_weighted
+SCTR      = math.max(0.0, math.min(99.9, _sctr_raw))
+// Raw weighted average — no centering offset, no clamping.
+// Sort by this in Pine Screener to get the same ranking order as StockCharts SCTR
+// (assuming same watchlist). The absolute number has no percentile meaning.
+SCTR_raw  = _sctr_weighted
+
+// ============================================================================
+// APPROACH A — SCTR DELTAS
+// "Is this stock's rank improving or deteriorating, and how fast?"
+// Positive = rank improving. Negative = rank weakening.
+// ============================================================================
+
+sctr_d1  = SCTR - SCTR[1]
+sctr_d5  = SCTR - SCTR[5]
+sctr_d21 = SCTR - SCTR[21]
+sctr_d63 = SCTR - SCTR[63]
+
+// ============================================================================
+// APPROACH B — COMPONENT SUB-SCORES
+// "Which time horizon is driving the SCTR?"
+// Each sub-score uses the same 0-100 formula applied to its own pair of inputs,
+// without the 60/30/10 weights so all three are directly comparable.
+// ============================================================================
+
+sctr_lt = math.max(0.0, math.min(99.9, 50 + 2.5 * ((_v1 + _v2) / 2)))  // 200d EMA + 125d ROC
+sctr_mt = math.max(0.0, math.min(99.9, 50 + 2.5 * ((_v3 + _v4) / 2)))  //  50d EMA + 20d ROC
+sctr_st = math.max(0.0, math.min(99.9, 50 + 2.5 * ((_v5 + _v6) / 2)))  // PPO slope + RSI
+
+// ============================================================================
+// APPROACH C — SCALED SCTR VARIANTS
+// "Same structural formula, parameters compressed to a shorter horizon."
+// Scaling: all bar-count params divided proportionally by target/standard ratio.
+//   Standard (5M): EMA(200), ROC(125), EMA(50), ROC(20), PPO(12,26,9), RSI(14)
+//   3M variant:    EMA(120), ROC( 63), EMA(30), ROC(10), PPO( 9,19,6), RSI(10)
+//   1M variant:    EMA( 80), ROC( 21), EMA(20), ROC( 5), PPO( 6,13,4), RSI( 7)
+//   1W variant:    EMA( 40), ROC( 10), EMA(10), ROC( 3), PPO( 4, 8,3), RSI( 5)
+// Note: scores cluster more toward extremes at shorter scales — use for relative
+// ranking within a watchlist, not for comparing absolute values across variants.
+// ============================================================================
+
+_sctr_variant(ema_l, roc_l, ema_m, roc_m, ppo_f, ppo_s, ppo_sig, rsi_p) =>
+    pf   = ta.ema(close, ppo_f)
+    ps   = ta.ema(close, ppo_s)
+    pl   = (pf - ps) / ps * 100
+    psig = ta.ema(pl, ppo_sig)
+    ph   = pl - psig
+    v1 = ((close - ta.ema(close, ema_l)) / ta.ema(close, ema_l)) * 100
+    v2 = ta.roc(close, roc_l)
+    v3 = ((close - ta.ema(close, ema_m)) / ta.ema(close, ema_m)) * 100
+    v4 = ta.roc(close, roc_m)
+    v5 = math.min(50.0, math.max(-50.0, 50.0 * ((ph - ph[3]) / 3)))
+    v6 = ta.rsi(close, rsi_p) - 50
+    raw = 50 + 2.5 * (0.60 * ((v1 + v2) / 2) + 0.30 * ((v3 + v4) / 2) + 0.10 * ((v5 + v6) / 2))
+    math.max(0.0, math.min(99.9, raw))
+
+sctr_3m = _sctr_variant(120, 63, 30, 10,  9, 19, 6, 10)
+sctr_1m = _sctr_variant( 80, 21, 20,  5,  6, 13, 4,  7)
+sctr_1w = _sctr_variant( 40, 10, 10,  3,  4,  8, 3,  5)
+
+// ============================================================================
+// SCREENER OUTPUTS — all columns available for sort/filter in Pine Screener
+// ============================================================================
+
+// Standard
+plot(SCTR,     "SCTR",      display=display.all)
+plot(SCTR_raw, "SCTR Raw",  display=display.all)   // sort key — same order as StockCharts SCTR
+
+// Approach A — Deltas
+plot(sctr_d1,  "SCTR Δ1D",  display=display.all)
+plot(sctr_d5,  "SCTR Δ5D",  display=display.all)
+plot(sctr_d21, "SCTR Δ1M",  display=display.all)
+plot(sctr_d63, "SCTR Δ3M",  display=display.all)
+
+// Approach B — Components
+plot(sctr_lt,  "SCTR LT",   display=display.all)
+plot(sctr_mt,  "SCTR MT",   display=display.all)
+plot(sctr_st,  "SCTR ST",   display=display.all)
+
+// Approach C — Scaled variants
+plot(sctr_3m,  "SCTR 3M",   display=display.all)
+plot(sctr_1m,  "SCTR 1M",   display=display.all)
+plot(sctr_1w,  "SCTR 1W",   display=display.all)
+
+// ============================================================================
+// CHART DISPLAY (single-symbol view — not used in Pine Screener)
+// ============================================================================
+
+// Primary SCTR line on chart
+plot(SCTR, "SCTR (chart)", color=color.new(color.white, 0), linewidth=2, display=display.pane)
+
+// Reference bands
+hline(75, "Strong (75)",  color=color.new(color.lime,   30), linestyle=hline.style_dashed)
+hline(50, "Neutral (50)", color=color.new(color.gray,   30), linestyle=hline.style_solid)
+hline(25, "Weak (25)",    color=color.new(color.red,    30), linestyle=hline.style_dashed)
+
+// Background zone coloring
+bgcolor(SCTR >= 75 ? color.new(color.lime,  92) :
+        SCTR <= 25 ? color.new(color.red,   92) : na,
+        title="SCTR Zone")
+
+// ============================================================================
+// INFO TABLE (single-symbol view)
+// ============================================================================
+
+_score_color(v) =>
+    v >= 70 ? color.lime : v >= 50 ? color.yellow : v <= 30 ? color.red : color.white
+
+_delta_color(v) =>
+    v > 0.5 ? color.lime : v < -0.5 ? color.red : color.gray
+
+var table tbl = table.new(position.top_right, 2, 15,
+     bgcolor=color.new(color.black, 75),
+     border_width=1, border_color=color.new(color.gray, 60))
+
+if barstate.islast
+    // Header
+    table.cell(tbl, 0, 0, "Column",    text_color=color.white, bgcolor=color.new(color.gray, 40), text_size=size.small)
+    table.cell(tbl, 1, 0, "Value",     text_color=color.white, bgcolor=color.new(color.gray, 40), text_size=size.small)
+
+    // Standard
+    table.cell(tbl, 0,  1, "SCTR",     text_color=color.silver, text_size=size.small)
+    table.cell(tbl, 1,  1, str.tostring(SCTR,     "#.#"),  text_color=_score_color(SCTR),    text_size=size.small)
+
+    // Raw sort key (centered at 0, no clamping — use this column for ranking in screener)
+    table.cell(tbl, 0,  2, "SCTR Raw", text_color=color.silver, text_size=size.small)
+    table.cell(tbl, 1,  2, str.tostring(SCTR_raw, "+#.##;-#.##"), text_color=(SCTR_raw > 2 ? color.lime : SCTR_raw < -2 ? color.red : color.gray), text_size=size.small)
+
+    // Approach B — Components
+    table.cell(tbl, 0,  3, "SCTR LT",  text_color=color.silver, text_size=size.small)
+    table.cell(tbl, 1,  3, str.tostring(sctr_lt,  "#.#"),  text_color=_score_color(sctr_lt), text_size=size.small)
+
+    table.cell(tbl, 0,  4, "SCTR MT",  text_color=color.silver, text_size=size.small)
+    table.cell(tbl, 1,  4, str.tostring(sctr_mt,  "#.#"),  text_color=_score_color(sctr_mt), text_size=size.small)
+
+    table.cell(tbl, 0,  5, "SCTR ST",  text_color=color.silver, text_size=size.small)
+    table.cell(tbl, 1,  5, str.tostring(sctr_st,  "#.#"),  text_color=_score_color(sctr_st), text_size=size.small)
+
+    // Approach A — Deltas
+    table.cell(tbl, 0,  6, "SCTR Δ1D", text_color=color.silver, text_size=size.small)
+    table.cell(tbl, 1,  6, str.tostring(sctr_d1,  "+#.##;-#.##"), text_color=_delta_color(sctr_d1),  text_size=size.small)
+
+    table.cell(tbl, 0,  7, "SCTR Δ5D", text_color=color.silver, text_size=size.small)
+    table.cell(tbl, 1,  7, str.tostring(sctr_d5,  "+#.##;-#.##"), text_color=_delta_color(sctr_d5),  text_size=size.small)
+
+    table.cell(tbl, 0,  8, "SCTR Δ1M", text_color=color.silver, text_size=size.small)
+    table.cell(tbl, 1,  8, str.tostring(sctr_d21, "+#.##;-#.##"), text_color=_delta_color(sctr_d21), text_size=size.small)
+
+    table.cell(tbl, 0,  9, "SCTR Δ3M", text_color=color.silver, text_size=size.small)
+    table.cell(tbl, 1,  9, str.tostring(sctr_d63, "+#.##;-#.##"), text_color=_delta_color(sctr_d63), text_size=size.small)
+
+    // Approach C — Scaled variants
+    table.cell(tbl, 0, 10, "SCTR 3M",  text_color=color.silver, text_size=size.small)
+    table.cell(tbl, 1, 10, str.tostring(sctr_3m,  "#.#"),  text_color=_score_color(sctr_3m), text_size=size.small)
+
+    table.cell(tbl, 0, 11, "SCTR 1M",  text_color=color.silver, text_size=size.small)
+    table.cell(tbl, 1, 11, str.tostring(sctr_1m,  "#.#"),  text_color=_score_color(sctr_1m), text_size=size.small)
+
+    table.cell(tbl, 0, 12, "SCTR 1W",  text_color=color.silver, text_size=size.small)
+    table.cell(tbl, 1, 12, str.tostring(sctr_1w,  "#.#"),  text_color=_score_color(sctr_1w), text_size=size.small)

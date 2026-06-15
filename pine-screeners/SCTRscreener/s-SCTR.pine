@@ -1,0 +1,153 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © s-SCTR
+//
+// StockCharts Technical Rank (SCTR) — John Murphy's formula, Pine Screener edition.
+// Designed for DAILY charts only. Use "Is Daily = 1" as your first screener filter.
+//
+// 14 screener columns:
+//   [0] Is Daily       — timeframe guard (filter on this first)
+//   [1] SCTR           — standard Murphy score 0-100 (~5M horizon)
+//   [2-5]  SCTR Δ1D/5D/1M/3M — rank velocity (how fast the score is changing)
+//   [6-8]  SCTR LT/MT/ST     — component sub-scores by time horizon
+//   [9-11] SCTR 3M/1M/1W     — scaled variants (same formula, shorter params)
+//   [12] Composite A   — cross-horizon average: (SCTR + SCTR_1M + SCTR_1W) / 3
+//   [13] Composite B   — strength × momentum: 60% SCTR + 40% Δ1M-normalised
+//
+// See SCTR-Screener-Model.md for full mathematical documentation.
+//
+// @usage
+// 1. Add to a Daily chart and save to Favourites
+// 2. Open Pine Screener: https://www.tradingview.com/pine-screener/
+// 3. Select watchlist → select this indicator
+// 4. Set first filter: Is Daily = 1
+// 5. Sort or filter by any column
+
+//@version=6
+indicator("s-SCTR", shorttitle="s-SCTR", overlay=true)
+
+// ============================================================================
+// TIMEFRAME GUARD
+// ============================================================================
+
+is_daily = timeframe.isdaily
+
+// ============================================================================
+// STANDARD SCTR — Murphy / TradingCharts formula
+//
+// SCTR = 50 + 2.5 × ( 0.60 × avg(v1, v2)      ← long-term  60%
+//                    + 0.30 × avg(v3, v4)        ← medium-term 30%
+//                    + 0.10 × avg(v5, v6) )      ← short-term  10%
+// Clamped 0 – 99.9. Score of 50 = stock perfectly at all MAs, RSI = 50.
+// ============================================================================
+
+_ppo_fast   = ta.ema(close, 12)
+_ppo_slow   = ta.ema(close, 26)
+_ppo_line   = (_ppo_fast - _ppo_slow) / _ppo_slow * 100
+_ppo_signal = ta.ema(_ppo_line, 9)
+_ppo_hist   = _ppo_line - _ppo_signal
+
+_v1 = ((close - ta.ema(close, 200)) / ta.ema(close, 200)) * 100   // % above/below 200d EMA
+_v2 = ta.roc(close, 125)                                            // 125d ROC (~5 months)
+_v3 = ((close - ta.ema(close, 50))  / ta.ema(close, 50))  * 100   // % above/below 50d EMA
+_v4 = ta.roc(close, 20)                                             // 20d ROC (~1 month)
+_v5 = (_ppo_hist - _ppo_hist[2]) / 3                               // 3d slope of PPO hist ÷ 3
+_v6 = ta.rsi(close, 14) - 50                                        // RSI(14) centred on zero
+
+_sctr_raw = 50 + 2.5 * (0.60 * ((_v1 + _v2) / 2) +
+                          0.30 * ((_v3 + _v4) / 2) +
+                          0.10 * ((_v5 + _v6) / 2))
+SCTR = math.max(0.0, math.min(99.9, _sctr_raw))
+
+// ============================================================================
+// APPROACH A — DELTAS  (rank velocity)
+// ============================================================================
+
+sctr_d1  = SCTR - SCTR[1]
+sctr_d5  = SCTR - SCTR[5]
+sctr_d21 = SCTR - SCTR[21]
+sctr_d63 = SCTR - SCTR[63]
+
+// ============================================================================
+// APPROACH B — COMPONENT SUB-SCORES  (which horizon drives the rank)
+// Each rescaled to 0-100 without the 60/30/10 weights for direct comparison.
+// ============================================================================
+
+sctr_lt = math.max(0.0, math.min(99.9, 50 + 2.5 * ((_v1 + _v2) / 2)))
+sctr_mt = math.max(0.0, math.min(99.9, 50 + 2.5 * ((_v3 + _v4) / 2)))
+sctr_st = math.max(0.0, math.min(99.9, 50 + 2.5 * ((_v5 + _v6) / 2)))
+
+// ============================================================================
+// APPROACH C — SCALED VARIANTS  (same formula, compressed parameters)
+//   3M: EMA(120), ROC(63),  EMA(30), ROC(10), PPO(9,19,6),  RSI(10)
+//   1M: EMA( 80), ROC(21),  EMA(20), ROC( 5), PPO(6,13,4),  RSI( 7)
+//   1W: EMA( 40), ROC(10),  EMA(10), ROC( 3), PPO(4, 8,3),  RSI( 5)
+// ============================================================================
+
+_sctr_variant(ema_l, roc_l, ema_m, roc_m, ppo_f, ppo_s, ppo_sig, rsi_p) =>
+    pf   = ta.ema(close, ppo_f)
+    ps   = ta.ema(close, ppo_s)
+    pl   = (pf - ps) / ps * 100
+    psig = ta.ema(pl, ppo_sig)
+    ph   = pl - psig
+    v1   = ((close - ta.ema(close, ema_l)) / ta.ema(close, ema_l)) * 100
+    v2   = ta.roc(close, roc_l)
+    v3   = ((close - ta.ema(close, ema_m)) / ta.ema(close, ema_m)) * 100
+    v4   = ta.roc(close, roc_m)
+    v5   = (ph - ph[2]) / 3
+    v6   = ta.rsi(close, rsi_p) - 50
+    raw  = 50 + 2.5 * (0.60 * ((v1 + v2) / 2) + 0.30 * ((v3 + v4) / 2) + 0.10 * ((v5 + v6) / 2))
+    math.max(0.0, math.min(99.9, raw))
+
+sctr_3m = _sctr_variant(120, 63, 30, 10,  9, 19, 6, 10)
+sctr_1m = _sctr_variant( 80, 21, 20,  5,  6, 13, 4,  7)
+sctr_1w = _sctr_variant( 40, 10, 10,  3,  4,  8, 3,  5)
+
+// ============================================================================
+// COMPOSITE SCORES
+//
+// Composite A — cross-horizon average
+//   (SCTR + SCTR_1M + SCTR_1W) / 3
+//   Rewards stocks strong at ALL timeframe scales simultaneously.
+//
+// Composite B — strength × momentum
+//   0.60 × SCTR + 0.40 × Δ1M-normalised
+//   Δ1M is mapped from [-50, +50] → [0, 100] so direction matters.
+//   A SCTR=75 still-rising scores higher than SCTR=75 falling.
+// ============================================================================
+
+comp_a = (SCTR + sctr_1m + sctr_1w) / 3
+
+_d21_norm = math.max(0.0, math.min(100.0, sctr_d21 + 50))
+comp_b    = 0.6 * SCTR + 0.4 * _d21_norm
+
+// ============================================================================
+// SCREENER OUTPUTS
+// ============================================================================
+
+plot(is_daily ? 1 : 0, "Is Daily",    display=display.all)
+
+plot(SCTR,              "SCTR",        display=display.all)
+
+plot(sctr_d1,           "SCTR Δ1D",   display=display.all)
+plot(sctr_d5,           "SCTR Δ5D",   display=display.all)
+plot(sctr_d21,          "SCTR Δ1M",   display=display.all)
+plot(sctr_d63,          "SCTR Δ3M",   display=display.all)
+
+plot(sctr_lt,           "SCTR LT",    display=display.all)
+plot(sctr_mt,           "SCTR MT",    display=display.all)
+plot(sctr_st,           "SCTR ST",    display=display.all)
+
+plot(sctr_3m,           "SCTR 3M",    display=display.all)
+plot(sctr_1m,           "SCTR 1M",    display=display.all)
+plot(sctr_1w,           "SCTR 1W",    display=display.all)
+
+plot(comp_a,            "Composite A", display=display.all)
+plot(comp_b,            "Composite B", display=display.all)
+
+// ============================================================================
+// VISUAL (single-chart only — ignored by Pine Screener)
+// ============================================================================
+
+bgcolor(is_daily and SCTR >= 75 ? color.new(color.lime, 92) :
+        is_daily and SCTR <= 25 ? color.new(color.red,  92) : na,
+        title="SCTR Zone")
