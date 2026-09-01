@@ -1,0 +1,99 @@
+visual_weinsteinStage.pine
+===========================
+
+Purpose
+-------
+Background-wash version of Stan Weinstein's 4-stage analysis, built to sit
+on the SAME pane as a relative-strength (RS) indicator via TradingView's
+"Add indicator to existing pane". Instead of an opaque area plot, stage
+color is drawn with bgcolor() at partial transparency so an RS line on
+that pane stays fully visible on top of the shading.
+
+Base stage logic and the optional Minervini Trend Template qualifier are
+adapted from "Stock Stage Analysis (Weinstein + Minervini)" by hkpress
+(source saved in this folder as "Empty File").
+
+Moving averages used
+---------------------
+50-day, 150-day, and 200-day SMA on daily closes (ta.sma(close, 50/150/200)).
+
+This is a daily-chart proxy for Weinstein's original method, which was
+defined on WEEKLY charts using a 30-week SMA (~150 trading days), with a
+10-week SMA and sometimes 40-week (~200-day) as secondary trend filters.
+The 150-day SMA and its 20-bar slope (ma150_slope) drive stage
+classification; ma50 and ma200 only feed the Stage-2 confirmation
+(ma50 > ma150) and the Minervini alignment check.
+
+Not yet implemented: forcing true weekly OHLC via request.security so
+stage is computed on weekly bars regardless of chart timeframe. Kept as
+daily-SMA proxy since the reference screenshot this was built from is a
+daily chart.
+
+Stage detection
+----------------
+stage2 (Advancing) = close > ma150  AND  ma150_slope > 0.5%  AND  ma50 > ma150
+stage4 (Declining)  = close < ma150  AND  ma150_slope < -0.5%
+
+ma150Flat = |ma150_slope| <= 0.5%
+stage1 (Basing)  = ma150Flat AND ma150 < ma150[20]  AND not stage2/4
+stage3 (Topping) = ma150Flat AND ma150 > ma150[20]  AND not stage2/4
+
+Fallback: if none of the four conditions fire, classify by close vs ma150
+(above -> stage2, below -> stage4), so every bar always has a stage.
+
+Colors
+------
+Stage 1 - Basing     : flat gray (color.gray). No intensity gradient.
+Stage 2 - Advancing  : green gradient, light (144,238,144) -> dark (0,100,0)
+Stage 3 - Topping    : yellow/orange gradient, light (255,255,153) -> dark (255,165,0)
+Stage 4 - Declining  : red gradient, light (255,182,193) -> dark (139,0,0)
+
+Gradient depth is driven by "intensity" (0-100), the average of:
+  - slopeIntensity    = min(|ma150_slope| * 10, 100)
+  - distanceIntensity = min(|(close - ma150) / ma150 * 100| * 20, 100)
+i.e. the stronger the MA slope and the further price sits from the MA,
+the darker/more saturated the shading within that stage's color range.
+
+Minervini qualifier (Stage 2 add-on)
+--------------------------------------
+Input "Mode": "Pure Weinstein" or "Weinstein + Minervini" (default: on).
+When enabled, a white square marker (location.top) appears on bars where
+Stage 2 also satisfies Minervini's Trend Template:
+  - minerviniAlignment = close > ma50 > ma150 > ma200
+  - ma200TrendingUp    = ma200_slope > 0.1%
+  - priceStrength      = within 25% of the 52-week high
+
+Toggling this mode only turns the marker on/off; it never changes the
+underlying stage classification or background color.
+
+Inputs
+------
+Mode                    : "Pure Weinstein" | "Weinstein + Minervini" (default: Weinstein + Minervini)
+Background transparency : 0-95, default 70. Higher = more see-through
+                           background, so an RS line on the same pane
+                           stays legible.
+
+Rendering
+---------
+- bgcolor(color.new(stageColor, bgTransparency)) draws the stage wash.
+- plot(na, ...) is a hidden zero-width anchor so the pane isn't left with
+  an empty scale before another indicator is merged onto it.
+- A small top-left table (table.new, updated on barstate.islast) prints
+  the current stage name in-pane, since the RS line will otherwise
+  obscure any status-line-only readout.
+
+How to combine with an existing RS indicator
+----------------------------------------------
+1. Apply your RS strength indicator to the chart (its own pane).
+2. Apply visual_weinsteinStage.pine (indicator, overlay=false -> opens in
+   its own pane by default).
+3. In the indicator/pane list, drag visual_weinsteinStage onto the RS
+   pane (or right-click -> "Move to" -> the RS pane), so both render in
+   the same pane. The RS line will draw on top of the stage bgcolor wash.
+
+Open questions / not yet resolved
+------------------------------------
+- Weekly vs daily MA basis (see "Moving averages used" above).
+- Exact stage-color palette was inherited from the hkpress reference,
+  not re-derived from the "deep vue" presentation the user referenced
+  as the original source of the visual style.

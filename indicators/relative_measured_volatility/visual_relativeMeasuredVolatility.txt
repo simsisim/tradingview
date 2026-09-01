@@ -1,0 +1,107 @@
+visual_relativeMeasuredVolatility.pine
+========================================
+
+Purpose
+-------
+Best-effort reconstruction of DeepVue's "Relative Measured Volatility"
+(RMV) indicator: flags volatility-contraction bars with a white dot
+below the candle, for spotting VCP-style (volatility contraction
+pattern) setups. Seen presented in a DeepVue walkthrough.
+
+DeepVue's exact formula is proprietary and NOT publicly disclosed. This
+implements only what is documented on deepvue.com and confirmed by
+searching their site/knowledge base/Substack:
+  - Uses each bar's raw high-low range.
+  - Down-weights bars with below-average (30-day) volume, so quiet-
+    volume tightening counts more than tightening on noisy/thin bars.
+  - Normalizes over the prior 15 bars (excluding the current bar) onto
+    a 0-100 scale: 0 = tightest, 100 = most volatile.
+  - Offers 5/10/15/20-day lookback variants.
+
+When directly asked (on Substack) whether RMV uses standard deviation,
+the DeepVue author did not confirm or deny -- the underlying math stays
+undisclosed. This script is therefore a reconstruction from the public
+description, NOT a verified port. Do not assume its 0-100 readings will
+numerically match DeepVue's own output.
+
+Relation to Range Tightening Indicator (RTI) by Ollie Cap
+-------------------------------------------------------------
+RTI (already used elsewhere in this workflow) is a different, publicly
+available take on the same idea. Its author states outright it was
+"inspired by DeepVue's RMV Indicator, but uses a different calculation."
+Key differences from this script:
+  - RTI has no documented volume weighting; this script explicitly
+    down-weights low-volume bars.
+  - RTI uses fixed zone thresholds (0-5 / 5-10 / 10-15, <20 trigger) on
+    an open-ended range ratio; this script normalizes to a bounded
+    0-100 percentile score, matching DeepVue's documented output range.
+  - RTI's lookback presets are 5/15/50 bars; this script's default
+    lookback is 15, matching DeepVue's documented default.
+
+Calculation
+-----------
+1. barRange = high - low  (raw bar range)
+
+2. Volume down-weighting:
+     volAvg    = sma(volume, volAvgLength)          // default length 30
+     volWeight = volume < volAvg ? volume / volAvg : 1.0
+     weightedRange = barRange * volWeight
+   A bar on half of average volume has its range counted at half
+   weight; a bar on average-or-above volume is counted at full weight
+   (never boosted above 1.0).
+
+3. Percentile-rank normalization against the prior `lookback` bars,
+   EXCLUDING the current bar (per DeepVue's documented method):
+     count = number of the past `lookback` weightedRange values that
+             are less than the current weightedRange
+     rmv   = count / lookback * 100
+
+   Implemented with a manual for-loop rather than Pine's built-in
+   ta.percentrank(), because that built-in's comparison window includes
+   the current bar, which would misalign with the documented "excluding
+   current bar" method.
+
+4. Tightness flag:
+     isTight = rmv <= tightThresh   (default tightThresh = 20)
+   Rendered as a small white circle at location.belowbar.
+
+Inputs
+------
+Normalization lookback   : 5 / 10 / 15 / 20, default 15 (matches DeepVue's documented default variant)
+Volume average length    : default 30 (matches DeepVue's documented 30-day volume average)
+Tight threshold (0-100)  : default 20 -- chosen to loosely match RTI's own "<20 = tight" convention for a comparable feel; NOT derived from DeepVue's own threshold, which is undisclosed
+
+Rendering
+---------
+- indicator(..., overlay=true): unlike visual_weinsteinStage (separate
+  pane), this must render on the price chart itself since the dot sits
+  below candles.
+- plotshape(..., location=location.belowbar): the white dot.
+- plot(rmv, ..., display=display.data_window): raw 0-100 value is
+  exposed only in the Data Window, not drawn on the price chart's
+  scale (a 0-100 value plotted directly on an overlay=true chart would
+  visually clash with the price axis). Use this to read the exact
+  number while tuning thresholds.
+
+Assumptions / undisclosed parts flagged explicitly
+-------------------------------------------------------
+- Volume-weighting curve (linear down-weight below average, capped at
+  1.0 above average) is a reasonable guess, not confirmed by DeepVue.
+- Normalization boundary (excluding current bar) is taken directly from
+  DeepVue's documented description, but the exact tie-breaking / edge
+  behavior at bar 0 of a symbol's history is this script's own choice
+  (count simply starts at 0 with fewer than `lookback` bars available).
+- tightThresh default (20) is a starting point, not a DeepVue-derived
+  value.
+
+Verification (not yet done against a live DeepVue chart)
+-------------------------------------------------------------
+1. Apply to a known consolidating stock in TradingView; confirm dots
+   cluster during visually obvious tight/quiet ranges and disappear
+   during expansion/breakout bars.
+2. Cross-check a few bars against the RTI indicator on the same chart --
+   values won't match numerically, but tight/loose timing should
+   broadly agree.
+3. Retune tightThresh and volAvgLength once you can compare against an
+   actual DeepVue screenshot or session -- current defaults are
+   unverified against DeepVue's real output.

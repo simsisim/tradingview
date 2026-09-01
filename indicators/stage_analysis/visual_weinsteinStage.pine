@@ -1,0 +1,92 @@
+//@version=5
+// visual_weinsteinStage
+// Stan Weinstein Stage Analysis, background-wash version.
+// Built to sit on the SAME pane as a relative-strength indicator (via
+// TradingView's "Add indicator to existing pane"): instead of an opaque
+// area plot, stage color is drawn with bgcolor() at partial transparency
+// so an RS line plotted in that pane stays fully visible on top.
+//
+// Base stage logic (50/150/200 SMA, ma150 slope, gradient intensity) and
+// the optional Minervini Trend Template qualifier are adapted from
+// "Stock Stage Analysis (Weinstein + Minervini)" by hkpress.
+indicator("visual_weinsteinStage", overlay=false)
+
+// ---- Inputs ----
+modeInput      = input.string("Weinstein + Minervini", "Mode", options=["Pure Weinstein", "Weinstein + Minervini"])
+bgTransparency = input.int(70, "Background transparency", minval=0, maxval=95, tooltip="Higher = more see-through, so an RS line on the same pane stays legible.")
+showMinerviniMarker = modeInput == "Weinstein + Minervini"
+
+// ---- Moving Averages ----
+ma50  = ta.sma(close, 50)
+ma150 = ta.sma(close, 150)
+ma200 = ta.sma(close, 200)
+
+// ---- MA Slope ----
+ma150_slope = ta.change(ma150, 20) / ma150 * 100
+ma200_slope = ta.change(ma200, 20) / ma200 * 100
+
+// ---- 52-Week High ----
+high52week = ta.highest(high, 252)
+pctFrom52WeekHigh = (high52week - close) / high52week * 100
+
+// ---- STAGE DETECTION ----
+stage2 = close > ma150 and ma150_slope > 0.5 and ma50 > ma150
+stage4 = close < ma150 and ma150_slope < -0.5
+
+ma150Flat = math.abs(ma150_slope) <= 0.5
+stage1 = ma150Flat and ma150 < ma150[20] and not stage2 and not stage4
+stage3 = ma150Flat and ma150 > ma150[20] and not stage2 and not stage4
+
+if not stage1 and not stage2 and not stage3 and not stage4
+    if close > ma150
+        stage2 := true
+    else
+        stage4 := true
+
+// ---- INTENSITY (0-100), drives gradient depth within a stage ----
+slopeIntensity    = math.min(math.abs(ma150_slope) * 10, 100)
+priceDistance     = math.abs((close - ma150) / ma150 * 100)
+distanceIntensity = math.min(priceDistance * 20, 100)
+intensity = math.min((slopeIntensity + distanceIntensity) / 2, 100)
+
+// ---- GRADIENT COLORS ----
+color1 = color.gray
+
+color2Light = color.rgb(144, 238, 144)
+color2Dark  = color.rgb(0, 100, 0)
+color2 = color.from_gradient(intensity, 0, 100, color2Light, color2Dark)
+
+color3Light = color.rgb(255, 255, 153)
+color3Dark  = color.rgb(255, 165, 0)
+color3 = color.from_gradient(intensity, 0, 100, color3Light, color3Dark)
+
+color4Light = color.rgb(255, 182, 193)
+color4Dark  = color.rgb(139, 0, 0)
+color4 = color.from_gradient(intensity, 0, 100, color4Light, color4Dark)
+
+stageColor = stage1 ? color1 : stage2 ? color2 : stage3 ? color3 : color4
+
+// ---- MINERVINI TREND TEMPLATE (Stage 2 qualifier) ----
+minerviniAlignment = close > ma50 and ma50 > ma150 and ma150 > ma200
+ma200TrendingUp    = ma200_slope > 0.1
+priceStrength      = pctFrom52WeekHigh < 25
+minerviniQualified = stage2 and minerviniAlignment and ma200TrendingUp and priceStrength
+
+// ---- RENDER ----
+// Transparent background wash instead of an opaque area plot, so an RS
+// line placed on this pane (Add indicator to existing pane) draws on top
+// and stays readable.
+bgcolor(color.new(stageColor, bgTransparency), title="Stage Background")
+
+// Zero-width anchor plot so the pane's scale isn't left empty when no
+// other indicator is merged onto it yet.
+plot(na, title="Stage Bar (hidden anchor)")
+
+plotshape(showMinerviniMarker and minerviniQualified, style=shape.square, location=location.top, color=color.white, size=size.tiny, title="Minervini Qualifier")
+
+// ---- Stage label, shown in-pane so it's visible even once merged behind an RS line ----
+stageLabel = stage1 ? "Stage 1 - Basing" : stage2 ? "Stage 2 - Advancing" : stage3 ? "Stage 3 - Topping" : "Stage 4 - Declining"
+
+var table stageTable = table.new(position.top_left, 1, 1)
+if barstate.islast
+    table.cell(stageTable, 0, 0, stageLabel, text_color=color.white, bgcolor=color.new(color.black, 40), text_size=size.small)
