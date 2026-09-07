@@ -1,0 +1,344 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © simsisim
+//
+// s-VTG Combo — momentum sub-model indicator + Pine Screener source.
+// Re-implementation of the Voyage Trading Group "VTG Combo Scanner" concept
+// (Oliver Wiedmaier). Setup definitions: see signal_spec.md.
+//
+// ONE script, two modes:
+//   * Indicator  — EMA cloud, 21 EMA / 50 SMA, ATR-extension table, bar coloring
+//                  and current-bar labels, all driven by "Show *" switches.
+//   * Pine Screener — every trigger is a hidden 0/1 column (display.none,
+//                  editable=false so it stays out of the Style tab) plus numeric
+//                  sortable columns. No request.*  -> screener-safe.
+//
+// Native chart timeframe. All setups are daily-oriented -> use a Daily chart.
+
+//@version=6
+// Title carries the "s-" prefix so it sorts/searches easily in the Pine Screener
+// "Indicator" list. shorttitle stays clean for the chart legend.
+indicator('s-VTG Combo', 'VTG Combo', overlay = true, max_labels_count = 500, max_lines_count = 200)
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Inputs — top level mirrors the VTG Combo Scanner panel (order + defaults)
+// ═════════════════════════════════════════════════════════════════════════════
+showLabels        = input.bool(true,  'Show trigger labels (text tag on the bar)')
+labelsCurrentOnly = input.bool(false, 'Show Labels Only on Current Bar')
+showBreakout      = input.bool(false, 'Show Breakout')
+showPreSling      = input.bool(false, 'Show Pre-Slingshot (yellow bars)')
+showSlingshot     = input.bool(true,  'Show Slingshot')
+show4pct          = input.bool(true,  'Show 4% Breakout')
+showInsideDay     = input.bool(false, 'Show Inside Day')
+showInsideBO      = input.bool(true,  'Show Inside Day Breakout')
+showOops          = input.bool(false, 'Show Oops Reversal')
+showSuperOops     = input.bool(false, 'Show Super Oops')
+showOEL           = input.bool(true,  'Show OEL')
+showAtrOver       = input.bool(false, 'Show 100%+ ATR')
+showAtrUnder      = input.bool(false, 'Show < 100% ATR')
+
+// extra triggers (not in Oliver's panel) — top-level so they sit with the main list
+showKicker  = input.bool(false, 'Show Kicker')
+show3Bar    = input.bool(false, 'Show 3-Bar Break')
+showOEH     = input.bool(false, 'Show OEH')
+showEngulf  = input.bool(false, 'Show Engulf')
+showNdayBO  = input.bool(false, 'Show N-day High Breakout')
+
+inputsInStatus    = input.bool(true,  'Inputs in status line')   // cosmetic (Pine cannot toggle input display at runtime)
+paintBars         = input.bool(true,  'Paint the trigger bar (like TAPLOT)')
+labelTextAuto     = input.bool(true,  'Label text auto black/white for contrast')
+
+gSig = 'Signal confirmation'
+confirmBody = input.bool(false, 'Confirm on full body (else close)', group = gSig, tooltip = 'A level-break signal needs the CLOSE beyond the level (or the whole candle body if this is on). A wick that pierces the level and then fades back does not count and is not kept in history.')
+livePreview = input.bool(false, 'Live intrabar preview on the forming bar', group = gSig, tooltip = 'OFF (default): pure close-confirmed everywhere — history matches the classic close-based definitions exactly. ON: while the current bar is still forming a signal shows tentatively off the wick and is removed on close if it did not confirm (repaints the forming bar only, never history).')
+
+gMA  = 'Moving averages'
+showCloud = input.bool(true, 'Show EMA cloud',        group = gMA)
+cloudLen  = input.int(21,    'EMA cloud length',      minval = 1, group = gMA)
+showEma   = input.bool(true, 'Show EMA line',         group = gMA)
+emaLineLen= input.int(21,    'EMA line length',       minval = 1, group = gMA)
+showSma   = input.bool(true, 'Show SMA line',         group = gMA)
+smaLen    = input.int(50,    'SMA line length',       minval = 1, group = gMA)
+
+gATR = 'ATR / extension table'
+atrLen       = input.int(14,           'ATR length',            minval = 1, group = gATR)
+showExtTable = input.bool(true,         'Show extension table',  group = gATR)
+tablePos     = input.string('Bottom Left', 'Table position', ['Top Left', 'Top Right', 'Bottom Left', 'Bottom Right'], group = gATR)
+
+gS = 'Slingshot'
+// Default config === TAPLOT "Sling Shot" (© TaPlot, MPL-2.0) exactly:
+//   EMALine  = ta.ema(high, 4)
+//   slingshot = close > EMALine and close[1]<EMALine[1] and close[2]<EMALine[2] and close[3]<EMALine[3]
+slingEmaLen = input.int(4, 'Slingshot EMA length', minval = 1, group = gS)
+slingEmaSrc = input.string('High', 'Slingshot EMA source', ['High', 'Close'], group = gS, tooltip = 'TAPLOT SlingShot uses the EMA of the highs.')
+slingBars   = input.int(3, 'Pullback bars below EMA', minval = 1, group = gS)
+slingPbSrc  = input.string('Close', 'Pullback test uses', ['Close', 'High'], group = gS, tooltip = 'Close = exact TAPLOT (each of the last N closes below the EMA). High = stricter: the whole bar (its high) stays below the EMA.')
+
+gID = 'Inside Day'
+idBoWindow  = input.int(3, 'Breakout window (bars after the inside day)', minval = 1, group = gID, tooltip = 'The inside day breakout counts if price clears the inside day range within this many bars. 1 = only the very next bar.')
+idLineShow  = input.bool(true,        'Draw breakout level line', group = gID)
+idLineColor = input.color(color.black,'Breakout line color',      group = gID)
+idLineLen   = input.int(5, 'Breakout line max length (bars)', minval = 1, group = gID, tooltip = 'Short segment from the inside day to just past the breakout — never extended right.')
+
+g4 = '4% Breakout'
+pctThresh = input.float(4.0, 'Day move threshold %', minval = 0, group = g4)
+atrMax    = input.float(4.0, 'Max ATR (price units)', minval = 0, group = g4)
+
+gP = 'Pre-Slingshot'
+preTrendLook = input.int(5,     'Trend lookback (EMA rising)', minval = 1, group = gP)
+preNearK     = input.float(0.75,'Max distance to EMA (xATR)',  minval = 0, group = gP)
+
+gO = 'OEL / OEH'
+oelTicks  = input.float(0.0,  'OEL/OEH tolerance (ticks)', minval = 0, group = gO)
+oelGapOnly= input.bool(false, 'OEL only on gap-up into prior upper wick', group = gO)
+
+gCmp = 'Breakout composite'
+compUnder1Atr = input.bool(false, 'Restrict "Breakout" to moves < 1 ATR', group = gCmp)
+
+gX = 'N-day High Breakout'
+boPrice     = input.int(60,  'N-day: price lookback',  minval = 1, group = gX)
+boVol       = input.int(60,  'N-day: volume lookback', minval = 1, group = gX)
+boTrend     = input.int(200, 'N-day: trend SMA',       minval = 1, group = gX)
+boUseVol    = input.bool(true, 'N-day: require volume expansion',      group = gX)
+boUseTrend  = input.bool(true, 'N-day: require close above trend SMA', group = gX)
+
+// Per-method colour — used for BOTH the painted bar and the label background.
+// (Pine `barcolor()` colours can't live in the Style tab, so they are here.)
+gCol = 'Trigger colours'
+colSling  = input.color(#26a69a,       'Slingshot',            group = gCol)
+colBreak  = input.color(#00897b,       'Breakout (composite)', group = gCol)
+colPre    = input.color(color.yellow,  'Pre-Slingshot',        group = gCol)
+col4pct   = input.color(#64dd17,       '4% Breakout',          group = gCol)
+colInside = input.color(#5c6bc0,       'Inside Day',           group = gCol)
+colIdBo   = input.color(#00bcd4,       'Inside Day Breakout',  group = gCol)
+colOops   = input.color(#ff9800,       'Oops Reversal',        group = gCol)
+colSuper  = input.color(#f57c00,       'Super Oops',           group = gCol)
+colOel    = input.color(#26a69a,       'OEL',                  group = gCol)
+colOeh    = input.color(#ef5350,       'OEH',                  group = gCol)
+colAtrOv  = input.color(#ffa726,       'ATR 100%+',            group = gCol)
+colAtrUn  = input.color(#9e9e9e,       'ATR < 100%',           group = gCol)
+colKick   = input.color(#26a69a,       'Kicker',               group = gCol)
+col3Bar   = input.color(#26a69a,       '3-Bar Break',          group = gCol)
+colEng    = input.color(#9e9e9e,       'Engulf',               group = gCol)
+colNday   = input.color(#00897b,       'N-day High Breakout',  group = gCol)
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Engine
+// ═════════════════════════════════════════════════════════════════════════════
+slingEma = ta.ema(slingEmaSrc == 'High' ? high : close, slingEmaLen)
+emaLine = ta.ema(close, emaLineLen)
+sma     = ta.sma(close, smaLen)
+emaHi   = ta.ema(high,  cloudLen)
+emaLo   = ta.ema(low,   cloudLen)
+atr     = ta.atr(atrLen)
+
+ext21      = atr != 0 ? (close - emaLine) / atr : na
+ext50      = atr != 0 ? (close - sma) / atr : na
+dayMovePct = close[1] != 0 ? (close - close[1]) / close[1] * 100 : na
+atrMove    = atr != 0 ? math.abs(close - close[1]) / atr : na
+dollarVolM = close * volume / 1e6
+
+// ── Confirmation helpers — one policy for every level-break signal.
+//    Closed bars: CLOSE (or whole body) must be beyond the level; a wick that
+//    pierces then fades back does not count and is never kept in history.
+//    Forming bar (livePreview on): tentative on the wick, removed on close if not
+//    confirmed — repaints on the current bar only.
+f_confUp(float lvl) =>
+    confirmed = (confirmBody ? math.min(open, close) : close) > lvl
+    livePreview and not barstate.isconfirmed ? high > lvl : confirmed
+
+f_confDn(float lvl) =>
+    confirmed = (confirmBody ? math.max(open, close) : close) < lvl
+    livePreview and not barstate.isconfirmed ? low < lvl : confirmed
+
+// ── Slingshot — pullback then reclaim of the fast EMA.
+//    Pullback: each of the last `slingBars` bars had its <slingPbSrc> below the
+//    EMA value AT THAT BAR (Close = exact TAPLOT chain).
+slingPbVal = slingPbSrc == 'High' ? high : close
+pulledBack = ta.highest(slingPbVal - slingEma, slingBars)[1] < 0
+slingshot  = pulledBack and f_confUp(slingEma)
+
+// ── Pre-Slingshot — below the short EMA, uptrend intact, coiled near the trigger
+trendUp  = slingEma > slingEma[preTrendLook]
+preSling = close < slingEma and trendUp and (slingEma - close) <= preNearK * atr and not slingshot
+
+// ── 4% Breakout — range-expansion day, ATR ceiling filter
+fourPct = not na(dayMovePct) and dayMovePct >= pctThresh and atr < atrMax
+
+// ── Inside day + inside-day breakout
+//    Inside day: today's range fully inside yesterday's (the coil).
+//    Breakout: price clears that inside day's high/low within `idBoWindow` bars.
+insideDay = high < high[1] and low > low[1]
+
+var float idHi   = na
+var float idLo   = na
+var int   idBar  = na       // bar_index of the inside day being tracked
+var bool  idOpen = false    // a coil is still waiting to resolve
+
+if insideDay
+    idHi   := high
+    idLo   := low
+    idBar  := bar_index
+    idOpen := true
+
+idBarsSince = na(idBar) ? na : bar_index - idBar
+idInWindow  = idOpen and not na(idBarsSince) and idBarsSince >= 1 and idBarsSince <= idBoWindow
+
+idBreakUp = idInWindow and f_confUp(idHi)
+idBreakDn = idInWindow and f_confDn(idLo)
+
+if idBreakUp or idBreakDn or (not na(idBarsSince) and idBarsSince > idBoWindow)
+    idOpen := false
+
+// black horizontal line at the level that broke — short segment, drawn on every
+// breakout (historical included; it's a capped segment so it doesn't clutter).
+// Not affected by "labels only on current bar" — that only governs the labels.
+if showInsideBO and idLineShow and (idBreakUp or idBreakDn)
+    lvl = idBreakUp ? idHi : idLo
+    x2  = math.min(bar_index + 1, idBar + idLineLen)
+    line.new(idBar, lvl, x2, lvl, color = idLineColor, width = 2, extend = extend.none)
+
+// ── Oops reversal (Larry Williams) — gap outside prior range, then reclaim it
+oopsUp = open < low[1]  and f_confUp(low[1])
+oopsDn = open > high[1] and f_confDn(high[1])
+
+// ── OEL / OEH
+tol       = oelTicks * syminfo.mintick
+oelBase   = open <= low + tol
+oelStrong = oelBase and open > close[1] and open > math.max(open[1], close[1]) and open < high[1]
+oel       = oelGapOnly ? oelStrong : oelBase
+oeh       = open >= high - tol
+
+// ── ATR context filters (day move vs ATR)
+atrOver100  = not na(atrMove) and atrMove >= 1.0
+atrUnder100 = not na(atrMove) and atrMove <  1.0
+
+// ── Extras (Kicker + 3-Bar Break match indicators/dashboard/dashboard.pine)
+superOops = open < low[1] and f_confUp(high[1])
+kicker    = close[1] < open[1] and open > open[1]                        // prior bar bearish, today opens above prior open
+b3Up      = high[1] < high[3] and f_confUp(ta.highest(high[1], 3))       // recent lower high, then close clears last 3 highs
+b3Dn      = low[1]  > low[3]  and f_confDn(ta.lowest(low[1], 3))         // recent higher low,  then close breaks last 3 lows
+engulf    = high > high[1] and low < low[1]
+ndayBO    = f_confUp(ta.highest(high, boPrice)[1]) and (not boUseVol or volume > ta.highest(volume, boVol)[1]) and (not boUseTrend or close > ta.sma(close, boTrend))
+
+// ── Composite "Breakout Triggered"
+breakoutEdges = slingshot or fourPct or idBreakUp or oel
+breakoutTrig  = compUnder1Atr ? (breakoutEdges and atrUnder100) : breakoutEdges
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Visual layer — EMA cloud + MA lines
+// ═════════════════════════════════════════════════════════════════════════════
+pTop = plot(showCloud ? emaHi : na, 'EMA cloud top',    color.new(color.blue, 75))
+pBot = plot(showCloud ? emaLo : na, 'EMA cloud bottom', color.new(color.blue, 75))
+fill(pTop, pBot, color.new(color.blue, 92), 'EMA cloud')
+plot(showEma ? emaLine : na, 'EMA line', color.new(color.green, 0), linewidth = 2)
+plot(showSma ? sma     : na, 'SMA line', color.new(color.red,   0), linewidth = 2)
+
+// ── Signal colour — the highest-priority firing method (priority = list order).
+sigCol = showSlingshot and slingshot                ? colSling  :
+   showBreakout  and breakoutTrig                   ? colBreak  :
+   showPreSling  and preSling                       ? colPre    :
+   show4pct      and fourPct                        ? col4pct   :
+   showInsideBO  and (idBreakUp or idBreakDn)       ? colIdBo   :
+   showInsideDay and insideDay                      ? colInside :
+   showOops      and (oopsUp or oopsDn)             ? colOops   :
+   showSuperOops and superOops                      ? colSuper  :
+   showOEL       and oel                            ? colOel    :
+   showOEH       and oeh                            ? colOeh    :
+   showKicker    and kicker                         ? colKick   :
+   show3Bar      and (b3Up or b3Dn)                 ? col3Bar   :
+   showEngulf    and engulf                         ? colEng    :
+   showNdayBO    and ndayBO                         ? colNday   :
+   showAtrOver   and atrOver100                     ? colAtrOv  :
+   showAtrUnder  and atrUnder100                    ? colAtrUn  : na
+
+// ── Paint the trigger bar (single barcolor, like TAPLOT). Independent of labels.
+barcolor(paintBars ? sigCol : na, title = 'Trigger bar')
+
+// ── Trigger labels — one small tag per firing method, STACKED above the candle
+//    (each keeps its own method colour). Historical + current. Independent of
+//    bar painting. Shows on every bar unless "Show Labels Only on Current Bar".
+labelOK  = showLabels and (not labelsCurrentOnly or barstate.islast)
+labelGap = input.float(0.4, 'Label stack spacing (× ATR)', minval = 0.05, group = gCol)
+gapY     = nz(atr, close * 0.02) * labelGap
+
+f_txt(color bg) =>
+    lum = 0.299 * color.r(bg) + 0.587 * color.g(bg) + 0.114 * color.b(bg)
+    labelTextAuto ? (lum > 150 ? color.black : color.white) : color.white
+
+f_tag(int slot, bool cond, string txt, color c) =>
+    s = slot
+    if cond and labelOK
+        label.new(bar_index, high + gapY + slot * gapY, txt, yloc = yloc.price, style = label.style_label_down, color = color.new(c, 0), textcolor = f_txt(c), size = size.small)
+        s := slot + 1
+    s
+
+slot = 0
+slot := f_tag(slot, showSlingshot and slingshot,      'Slingshot',     colSling)
+slot := f_tag(slot, showBreakout  and breakoutTrig,   'Breakout',      colBreak)
+slot := f_tag(slot, showPreSling  and preSling,       'Pre-Slingshot', colPre)
+slot := f_tag(slot, show4pct      and fourPct,        '4%',            col4pct)
+slot := f_tag(slot, showInsideBO  and idBreakUp,      'ID Break+',     colIdBo)
+slot := f_tag(slot, showInsideBO  and idBreakDn,      'ID Break-',     colIdBo)
+slot := f_tag(slot, showInsideDay and insideDay,      'Inside',        colInside)
+slot := f_tag(slot, showOops      and oopsUp,         'Oops+',         colOops)
+slot := f_tag(slot, showOops      and oopsDn,         'Oops-',         colOops)
+slot := f_tag(slot, showSuperOops and superOops,      'Super Oops',    colSuper)
+slot := f_tag(slot, showOEL       and oel,            'OEL',           colOel)
+slot := f_tag(slot, showOEH       and oeh,            'OEH',           colOeh)
+slot := f_tag(slot, showKicker    and kicker,         'Kicker',        colKick)
+slot := f_tag(slot, show3Bar      and b3Up,           '3Bar+',         col3Bar)
+slot := f_tag(slot, show3Bar      and b3Dn,           '3Bar-',         col3Bar)
+slot := f_tag(slot, showEngulf    and engulf,         'Engulf',        colEng)
+slot := f_tag(slot, showNdayBO    and ndayBO,         'BO ' + str.tostring(boPrice) + 'd', colNday)
+
+// ── ATR-extension table
+posConst = switch tablePos
+    'Top Left'     => position.top_left
+    'Top Right'    => position.top_right
+    'Bottom Left'  => position.bottom_left
+    'Bottom Right' => position.bottom_right
+    => position.bottom_left
+
+f_extTxt(float v) => na(v) ? 'n/a' : str.tostring(v, '0.00') + ' ATR'
+f_extCol(float v) => na(v) ? color.gray : v >= 0 ? color.lime : color.red
+
+var table extTab = table.new(posConst, 1, 3, bgcolor = color.new(#b8860b, 15), border_color = color.new(color.gray, 60), border_width = 1)
+if barstate.islast and showExtTable
+    table.cell(extTab, 0, 0, 'Extension', text_color = color.white, text_size = size.small, bgcolor = color.new(#b8860b, 0))
+    table.cell(extTab, 0, 1, str.tostring(emaLineLen) + ' EMA: ' + f_extTxt(ext21), text_color = f_extCol(ext21), text_size = size.small)
+    table.cell(extTab, 0, 2, str.tostring(smaLen) + ' SMA: ' + f_extTxt(ext50), text_color = f_extCol(ext50), text_size = size.small)
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Screener + alerts — one alertcondition() per trigger.
+//   In the Pine Screener each becomes a TRUE/FALSE filter column (pick "True"
+//   to list only the tickers where it fired on the last bar) — this is the
+//   mechanism Oliver's screener uses, NOT plot()/plotshape().
+//   Each also doubles as a normal chart alert.
+//   Not gated by the "Show *" switches — every column is always available.
+// ═════════════════════════════════════════════════════════════════════════════
+alertcondition(slingshot,    'Slingshot Triggered',            'VTG: Slingshot {{ticker}}')
+alertcondition(breakoutTrig, 'Breakout Triggered',             'VTG: Breakout {{ticker}}')
+alertcondition(fourPct,      '4% Breakout Triggered',          'VTG: 4% Breakout {{ticker}}')
+alertcondition(preSling,     'Pre-Slingshot Triggered',        'VTG: Pre-Slingshot {{ticker}}')
+alertcondition(insideDay,    'Inside Day Triggered',           'VTG: Inside Day {{ticker}}')
+alertcondition(idBreakUp,    'Inside Day Breakout Triggered',  'VTG: Inside Day Breakout {{ticker}}')
+alertcondition(idBreakDn,    'Inside Day Breakdown Triggered', 'VTG: Inside Day Breakdown {{ticker}}')
+alertcondition(oopsUp,       'Oops Reversal',                  'VTG: Oops Reversal {{ticker}}')
+alertcondition(oopsDn,       'Oops Reversal (bear)',           'VTG: Oops Reversal bear {{ticker}}')
+alertcondition(superOops,    'Super Oops',                     'VTG: Super Oops {{ticker}}')
+alertcondition(oel,          'OEL Triggered',                  'VTG: OEL {{ticker}}')
+alertcondition(oeh,          'OEH Triggered',                  'VTG: OEH {{ticker}}')
+alertcondition(atrOver100,   'ATR 100%+',                      'VTG: ATR 100%+ {{ticker}}')
+alertcondition(atrUnder100,  'ATR < 100%',                     'VTG: ATR < 100% {{ticker}}')
+alertcondition(kicker,       'Kicker',                         'VTG: Kicker {{ticker}}')
+alertcondition(b3Up,         '3-Bar Break Up',                 'VTG: 3-Bar Break Up {{ticker}}')
+alertcondition(b3Dn,         '3-Bar Break Down',               'VTG: 3-Bar Break Down {{ticker}}')
+alertcondition(engulf,       'Engulf',                         'VTG: Engulf {{ticker}}')
+alertcondition(ndayBO,       'N-day High Breakout',            'VTG: N-day High Breakout {{ticker}}')
+
+// Numeric screener columns (range / sortable) — hidden from the chart.
+plot(ext21,      'Ext EMA (ATR)',  display = display.none, editable = false)
+plot(ext50,      'Ext SMA (ATR)',  display = display.none, editable = false)
+plot(atrMove,    'Move / ATR',     display = display.none, editable = false)
+plot(dayMovePct, 'Chg 1D %',       display = display.none, editable = false)
+plot(dollarVolM, '$ Vol (M)',      display = display.none, editable = false)
