@@ -8,9 +8,13 @@
 // ONE script, two modes:
 //   * Indicator  — EMA cloud, 21 EMA / 50 SMA, ATR-extension table, bar coloring
 //                  and current-bar labels, all driven by "Show *" switches.
-//   * Pine Screener — every trigger is a hidden 0/1 column (display.none,
-//                  editable=false so it stays out of the Style tab) plus numeric
-//                  sortable columns. No request.*  -> screener-safe.
+//   * Pine Screener — every trigger is a hidden plot() of 1/0 and every metric a
+//                  hidden numeric plot() (display.none + editable=false so they
+//                  stay off the chart and out of the Style tab). The metric
+//                  columns mirror the s-VTG ATR table (21/50/Low ATR distance,
+//                  day/body range expansion), computed inline here on the native
+//                  TF — keep the formulas in sync with visual_vtgAtr.pine.
+//                  No request.*  -> screener-safe.
 //
 // Native chart timeframe. All setups are daily-oriented -> use a Daily chart.
 
@@ -131,11 +135,20 @@ emaHi   = ta.ema(high,  cloudLen)
 emaLo   = ta.ema(low,   cloudLen)
 atr     = ta.atr(atrLen)
 
+// Extension / range math.  KEEP IN SYNC with visual_vtgAtr.pine (d21 / d50 /
+// anchLow / dayExp / bodyExp there) so the screener column == the ATR table cell.
 ext21      = atr != 0 ? (close - emaLine) / atr : na
-ext50      = atr != 0 ? (close - sma) / atr : na
+ext50      = atr != 0 ? (close - sma)     / atr : na
+extLow     = atr != 0 ? (close - low)     / atr : na     // ATR from the day's low
 dayMovePct = close[1] != 0 ? (close - close[1]) / close[1] * 100 : na
 atrMove    = atr != 0 ? math.abs(close - close[1]) / atr : na
 dollarVolM = close * volume / 1e6
+
+// Range / body expansion vs the prior bar (the s-VTG ATR table metrics).
+rng        = high - low
+bdy        = math.abs(close - open)
+dayExp     = rng[1] != 0 ? (rng / rng[1] - 1) * 100 : na
+bodyExp    = bdy[1] != 0 ? (bdy / bdy[1] - 1) * 100 : na
 
 // ── Confirmation helpers — one policy for every level-break signal.
 //    Closed bars: CLOSE (or whole body) must be beyond the level; a wick that
@@ -309,12 +322,10 @@ if barstate.islast and showExtTable
     table.cell(extTab, 0, 2, str.tostring(smaLen) + ' SMA: ' + f_extTxt(ext50), text_color = f_extCol(ext50), text_size = size.small)
 
 // ═════════════════════════════════════════════════════════════════════════════
-// Screener + alerts — one alertcondition() per trigger.
-//   In the Pine Screener each becomes a TRUE/FALSE filter column (pick "True"
-//   to list only the tickers where it fired on the last bar) — this is the
-//   mechanism Oliver's screener uses, NOT plot()/plotshape().
-//   Each also doubles as a normal chart alert.
-//   Not gated by the "Show *" switches — every column is always available.
+// Chart alerts — one alertcondition() per trigger. These feed TradingView's
+// alert dialog only; alertcondition() does NOT create Pine Screener columns
+// (the screener reads plots — see the plotchar block below). Not gated by the
+// "Show *" switches.
 // ═════════════════════════════════════════════════════════════════════════════
 alertcondition(slingshot,    'Slingshot Triggered',            'VTG: Slingshot {{ticker}}')
 alertcondition(breakoutTrig, 'Breakout Triggered',             'VTG: Breakout {{ticker}}')
@@ -336,9 +347,54 @@ alertcondition(b3Dn,         '3-Bar Break Down',               'VTG: 3-Bar Break
 alertcondition(engulf,       'Engulf',                         'VTG: Engulf {{ticker}}')
 alertcondition(ndayBO,       'N-day High Breakout',            'VTG: N-day High Breakout {{ticker}}')
 
-// Numeric screener columns (range / sortable) — hidden from the chart.
-plot(ext21,      'Ext EMA (ATR)',  display = display.none, editable = false)
-plot(ext50,      'Ext SMA (ATR)',  display = display.none, editable = false)
-plot(atrMove,    'Move / ATR',     display = display.none, editable = false)
-plot(dayMovePct, 'Chg 1D %',       display = display.none, editable = false)
-plot(dollarVolM, '$ Vol (M)',      display = display.none, editable = false)
+// ═════════════════════════════════════════════════════════════════════════════
+// Pine Screener columns.
+//
+// The Pine Screener builds its column list from a script's plot() outputs, so
+// EVERY screener column here is a plot():
+//   * triggers  -> plot(cond ? 1 : 0)  — 1 = fired on the last bar, 0 = not.
+//                  Add the column, then filter it "> 0" (or sort by it).
+//   * metrics   -> plot(value)          — range filter + sort.
+// alertcondition() (above) only creates a *filter*, never an addable column, and
+// plotchar/plotshape are unreliable as columns — hence plain plot() for all.
+//
+// display.none keeps them off the chart; editable=false keeps them out of the
+// Style tab. Not gated by the "Show *" switches — always available in the screener.
+//
+// After editing this block you MUST re-add the indicator in the Pine Screener
+// (remove s-VTG Combo, add it again) and press Scan — it caches the old columns.
+// ═════════════════════════════════════════════════════════════════════════════
+
+// ── Trigger columns  (1 = fired on the last bar, 0 = not) ────────────────────
+plot(slingshot    ? 1 : 0, 'Slingshot',            display = display.none, editable = false)
+plot(breakoutTrig ? 1 : 0, 'Breakout',             display = display.none, editable = false)
+plot(fourPct      ? 1 : 0, '4% Breakout',          display = display.none, editable = false)
+plot(preSling     ? 1 : 0, 'Pre-Slingshot',        display = display.none, editable = false)
+plot(insideDay    ? 1 : 0, 'Inside Day',           display = display.none, editable = false)
+plot(idBreakUp    ? 1 : 0, 'Inside Day Breakout',  display = display.none, editable = false)
+plot(idBreakDn    ? 1 : 0, 'Inside Day Breakdown', display = display.none, editable = false)
+plot(oopsUp       ? 1 : 0, 'Oops Reversal',        display = display.none, editable = false)
+plot(oopsDn       ? 1 : 0, 'Oops Reversal (bear)', display = display.none, editable = false)
+plot(superOops    ? 1 : 0, 'Super Oops',           display = display.none, editable = false)
+plot(oel          ? 1 : 0, 'OEL',                  display = display.none, editable = false)
+plot(oeh          ? 1 : 0, 'OEH',                  display = display.none, editable = false)
+plot(atrOver100   ? 1 : 0, 'ATR 100%+',            display = display.none, editable = false)
+plot(atrUnder100  ? 1 : 0, 'ATR < 100%',           display = display.none, editable = false)
+plot(kicker       ? 1 : 0, 'Kicker',               display = display.none, editable = false)
+plot(b3Up         ? 1 : 0, '3-Bar Break Up',       display = display.none, editable = false)
+plot(b3Dn         ? 1 : 0, '3-Bar Break Down',     display = display.none, editable = false)
+plot(engulf       ? 1 : 0, 'Engulf',               display = display.none, editable = false)
+plot(ndayBO       ? 1 : 0, 'N-day High Breakout',  display = display.none, editable = false)
+
+// ── Metric columns (range / sortable) ───────────────────────────────────────
+//    ext21 / ext50 / extLow / dayExp / bodyExp mirror the s-VTG ATR table so
+//    you can filter "trigger fired AND not overextended" in one screener pass,
+//    e.g.  Slingshot > 0   AND   21 EMA (ATR) < 3   AND   Day Range Exp % > 0
+plot(ext21,      '21 EMA (ATR)',     display = display.none, editable = false)
+plot(ext50,      '50 SMA (ATR)',     display = display.none, editable = false)
+plot(extLow,     'Low (ATR)',        display = display.none, editable = false)
+plot(dayExp,     'Day Range Exp %',  display = display.none, editable = false)
+plot(bodyExp,    'Body Range Exp %', display = display.none, editable = false)
+plot(atrMove,    'Move / ATR',       display = display.none, editable = false)
+plot(dayMovePct, 'Chg 1D %',         display = display.none, editable = false)
+plot(dollarVolM, '$ Vol (M)',        display = display.none, editable = false)

@@ -9,6 +9,14 @@ Files:
 - `signal_spec.md` — exact trigger definitions / parameters
 - `IMPLEMENTATION_PLAN.md` — full roadmap
 
+## Shared with s-VTG ATR
+
+The Combo screener emits the same extension / range-expansion metrics that the
+**s-VTG ATR** on-chart table draws (`21 EMA (ATR)`, `50 SMA (ATR)`, `Low (ATR)`,
+`Day Range Exp %`, `Body Range Exp %`). The formulas are **duplicated inline** in
+both `visual_vtgCombo.pine` and `visual_vtgAtr.pine` — if you change one, change
+the other. Each file has a `KEEP IN SYNC` comment on that block.
+
 ## Chart mode
 
 Add to a **Daily** chart. You get:
@@ -19,31 +27,43 @@ Add to a **Daily** chart. You get:
 
 ## Screener mode
 
-1. In the Pine editor, **Save** the script, then **Add to favorites** (star icon).
+1. In the Pine editor, paste the current `visual_vtgCombo.pine`, **Save**, then
+   **Add to favorites** (star icon).
 2. Open **Pine Screener** (tradingview.com/pine-screener).
-3. Pick a watchlist, set *Indicator* to **s-VTG Combo** (the `s-` prefix makes it
-   quick to find in the list), click **Scan**.
-4. Add filters:
-   - **Trigger columns are True/False** — they come from `alertcondition()`
-     (that is the mechanism the Pine Screener turns into a True/False dropdown,
-     *not* `plot`/`plotshape`). Pick `Inside Day Triggered`, `Slingshot
-     Triggered`, `Breakout Triggered`, … and set it to **True** → the screener
-     lists only the tickers where it fired on the last bar. Exactly Oliver's
-     `Breakout Triggered = True`.
-   - **Numeric columns** (from `plot`) filter by range / sort:
-     `Ext EMA (ATR)`, `Ext SMA (ATR)`, `Move / ATR`, `Chg 1D %`, `$ Vol (M)`.
-5. Combine e.g. `Inside Day Breakout Triggered = True` **and** `$ Vol (M) ≥ 20`.
+3. Pick a watchlist. Set *Indicator* to **s-VTG Combo** (the `s-` prefix makes it
+   quick to find). **If it was already loaded from an earlier version, remove it
+   and add it again** — the screener caches the old column list.
+4. Set the timeframe to **1D** and press **Scan**. Every column shows `—` until
+   you press Scan.
+5. Click the **column manager** (the icon top-right of the table) and tick the
+   columns you want:
+   - **Trigger columns** — `Slingshot`, `Breakout`, `4% Breakout`, `Inside Day
+     Breakout`, `OEL`, … Each is **1** when it fired on the last bar, **0** when
+     not. Add a filter on it: `> 0` keeps only the tickers where it fired
+     (Oliver's `Breakout Triggered = True`). Sort by it too.
+   - **Metric columns** — mirror the s-VTG ATR table so you screen extension in
+     the same pass: `21 EMA (ATR)`, `50 SMA (ATR)`, `Low (ATR)`,
+     `Day Range Exp %`, `Body Range Exp %`, `Move / ATR`, `Chg 1D %`, `$ Vol (M)`.
+6. Combine e.g. `Slingshot > 0` **and** `21 EMA (ATR) < 3` **and**
+   `Day Range Exp % > 0` **and** `$ Vol (M) ≥ 20` — trigger fired, not yet
+   overextended, range expanding, liquid.
+
+The `alertcondition()` names ending in *"Triggered"* also show up as screener
+**filters**, but they can't be added as visible columns — ignore them and use the
+plain `plot()` columns above (no *"Triggered"* suffix).
 
 Screener notes / limits:
 - Screener evaluates the **last bar only** — no historical scanning.
+- Cells show values only — **no cell colouring**, no ✓/✗ glyphs (that lives on
+  the s-VTG ATR on-chart table). A trigger column is `1`/`0`; sort / filter it.
 - Every column is always available (the chart `Show *` toggles do **not** affect
   the screener).
 - Set the Pine Screener timeframe to **1D** to match the intended setups.
 - No `request.*` is used, so every column works in the screener.
-- After updating the script, **remove the indicator from the screener and re-add
-  it** so it drops any cached columns from an earlier version.
-- The 4 chart plots (`EMA cloud top/bottom`, `EMA line`, `SMA line`) also appear
-  as numeric columns — harmless, just don't add them.
+- After **any** edit to the script, remove the indicator from the screener and
+  re-add it, then Scan — otherwise you keep seeing the old columns.
+- The chart plots (`EMA cloud top/bottom`, `EMA line`, `SMA line`) also appear
+  as numeric columns — harmless, just don't tick them.
 
 ## Confirmation
 
@@ -89,5 +109,7 @@ Day, Inside Day Breakout, Oops Reversal, OEL, Breakout (composite). PROVISIONAL
 (tune vs his charts): Pre-Slingshot, ATR 100%+ / < 100%, and the 4% move basis.
 EXTRA (off by default): Super Oops, OEH, Kicker, 3-Bar, Engulf, N-day High Breakout.
 
-> Screener plots use `display = display.none, editable = false`. If a column
-> fails to appear in Pine Screener, change that block to `display = display.all`.
+> Every screener column is a `plot()` with `display = display.none, editable =
+> false` (triggers plot `1`/`0`, metrics plot the value). If a column fails to
+> appear, temporarily switch that block to `display = display.all`, and remember
+> to remove + re-add the indicator in the screener after every edit.

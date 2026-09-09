@@ -1,0 +1,192 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © simsisim
+//
+// s-VTG ATR — extension / risk-before-entry table. Companion to s-VTG Combo.
+// Re-implementation of the Voyage Trading Group "VTG ATR" concept (Ollie_AllCaps,
+// invite-only) on top of the open "ALEX - ATR Extensions + ADR + Table" feature
+// set (Alex_PrimeTrading).
+//
+// Table (daily values, so they stay correct on intraday charts):
+//   Low                    (close - day Low)  / ATR          -> "x.xx ATR"
+//   21 EMA                 (close - 21 MA)    / ATR          -> "x.xx ATR"
+//   50 SMA                 (close - 50 MA)    / ATR          -> "x.xx ATR"
+//   Day Range Expansion    today (H-L)  vs PRIOR day, %      -> "(today/prior - 1) * 100"
+//   Body Range Expansion   today |O-C|  vs PRIOR day, %      -> "(today/prior - 1) * 100"
+//
+// Style: black text always. Each classified row is coloured green (OK) or red
+// (caution) by its value; neutral rows keep the table background.
+//
+//@version=6
+indicator('s-VTG ATR', 'VTG ATR', overlay = true, max_lines_count = 20)
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Inputs
+// ═════════════════════════════════════════════════════════════════════════════
+gR = 'Table rows'
+showAtrPct   = input.bool(false, 'ATR %',                     group = gR)
+showAdrPct   = input.bool(false, 'ADR %',                     group = gR)
+showAnchLow  = input.bool(true,  'Low  (ATR from day Low)',   group = gR)
+showAnchOpen = input.bool(false, 'Open (ATR from day Open)',  group = gR)
+showLodDist  = input.bool(false, 'LoD distance %',            group = gR)
+showLodPrice = input.bool(false, 'LoD price',                 group = gR)
+showDist21   = input.bool(true,  '21 EMA (ATR from 21 MA)',   group = gR)
+showDist50   = input.bool(true,  '50 SMA (ATR from 50 MA)',   group = gR)
+show21Price  = input.bool(false, '21 MA price',               group = gR)
+show50Price  = input.bool(false, '50 MA price',               group = gR)
+showDayExp   = input.bool(true,  'Day Range Expansion',       group = gR)
+showBodyExp  = input.bool(true,  'Body Range Expansion',      group = gR)
+showExtTgts  = input.bool(false, 'ATR extension targets',     group = gR)
+
+gM = 'Moving averages & ATR'
+ma21Type = input.string('EMA', '21 MA type', ['EMA', 'SMA'], group = gM)
+ma50Type = input.string('SMA', '50 MA type', ['EMA', 'SMA'], group = gM)
+p21      = input.int(21, '21 MA period', minval = 1, group = gM)
+p50      = input.int(50, '50 MA period', minval = 1, group = gM)
+atrLen   = input.int(14, 'ATR length',   minval = 1, group = gM)
+adrLen   = input.int(20, 'ADR length',   minval = 1, group = gM)
+useDaily = input.bool(true, 'Use Daily values even on intraday charts', group = gM)
+
+gC = 'Row colour  (text stays black; each row shows green = OK or red = caution)'
+odT21 = input.float(3.0, '21 MA — red when more than this many ATR above (overextended)', minval = 0, group = gC)
+odT50 = input.float(5.0, '50 MA — red when more than this many ATR above (overextended)', minval = 0, group = gC)
+
+gT = 'ATR extension targets'
+mult21     = input.float(2.0, '21 MA target — ATR x', minval = 0, group = gT)
+mult50     = input.float(4.0, '50 MA target — ATR x', minval = 0, group = gT)
+showLine21 = input.bool(false, 'Plot 21 target line', group = gT)
+showLine50 = input.bool(false, 'Plot 50 target line', group = gT)
+lineCol21  = input.color(color.orange, '21 line colour', group = gT, inline = 'l')
+lineCol50  = input.color(color.red,    '50 line colour', group = gT, inline = 'l')
+
+gB = 'Bar markers'
+showChar21 = input.bool(false, 'Mark bars extended from 21 MA', group = gB)
+char21     = input.string('●', '21 symbol',   group = gB, inline = '21')
+charCol21  = input.color(color.new(#cfcece, 0), '', group = gB, inline = '21')
+charThr21  = input.float(2.0, '21 threshold (ATR)', minval = 0, group = gB)
+showChar50 = input.bool(false, 'Mark bars extended from 50 MA', group = gB)
+char50     = input.string('—', '50 symbol',   group = gB, inline = '50')
+charCol50  = input.color(color.new(#fb00ff, 0), '', group = gB, inline = '50')
+charThr50  = input.float(2.0, '50 threshold (ATR)', minval = 0, group = gB)
+
+gS = 'Table style'
+tPos  = input.string('Bottom Left', 'Position', ['Top Left', 'Top Right', 'Middle Right', 'Bottom Left', 'Bottom Right'], group = gS)
+tFont = input.string('Small', 'Font size', ['Tiny', 'Small', 'Normal', 'Large'], group = gS)
+tBg   = input.color(#8ccf8c, 'Table background (neutral rows)', group = gS)
+tTxt  = input.color(color.black, 'Table text',   group = gS)
+colG  = input.color(color.new(#66bb6a, 0), 'Row OK (green)',      group = gS, inline = 'c')
+colR  = input.color(color.new(#ef5350, 0), 'Row caution (red)',   group = gS, inline = 'c')
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Core calculations
+// Everything is computed in the main scope, then pulled from the 1D timeframe in
+// ONE request.security call (or the chart TF if "Use Daily" is off).  Computing
+// the MAs here — instead of calling a helper function inside request.security —
+// is what makes every toggled row populate reliably.
+// ═════════════════════════════════════════════════════════════════════════════
+tf   = useDaily ? '1D' : timeframe.period
+ma21 = ma21Type == 'EMA' ? ta.ema(close, p21) : ta.sma(close, p21)
+ma50 = ma50Type == 'EMA' ? ta.ema(close, p50) : ta.sma(close, p50)
+atr  = ta.atr(atrLen)
+adr  = ta.sma(high - low, adrLen)
+rng  = high - low
+bdy  = math.abs(close - open)
+
+[atrV, dma21, dma50, dLow, dOpen, dClose, dRng, dRngP, dBody, dBodyP, dAdr] =
+     request.security(syminfo.tickerid, tf,
+     [atr, ma21, ma50, low, open, close, rng, rng[1], bdy, bdy[1], adr])
+
+// ── Extension / range math.  KEEP IN SYNC with the screener columns near the end
+//    of visual_vtgCombo.pine (extLow / ext21 / ext50 / dayExp / bodyExp) so the
+//    number the Combo screener filters on == the number this table draws.
+ok(float x) => not na(x) and x != 0
+
+atrPct     = ok(atrV) and dClose != 0 ? atrV / dClose * 100 : na
+adrPct     = ok(dAdr) and dClose != 0 ? dAdr / dClose * 100 : na
+
+distATR(float x) => ok(atrV) and not na(x) ? (dClose - x) / atrV : na
+d21        = distATR(dma21)
+d50        = distATR(dma50)
+anchLow    = distATR(dLow)
+anchOpen   = distATR(dOpen)
+
+lodDistPct = dClose != 0 ? (dClose - dLow) / dClose * 100 : na
+dayExp     = ok(dRngP)  ? (dRng  / dRngP  - 1) * 100 : na
+bodyExp    = ok(dBodyP) ? (dBody / dBodyP - 1) * 100 : na
+extTgt21   = dma21 + atrV * mult21
+extTgt50   = dma50 + atrV * mult50
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Chart: ATR extension target lines + extended-bar markers
+// ═════════════════════════════════════════════════════════════════════════════
+plot(showLine21 ? extTgt21 : na, '21 ATR target', color = lineCol21, linewidth = 2)
+plot(showLine50 ? extTgt50 : na, '50 ATR target', color = lineCol50, linewidth = 2)
+
+plotchar(showChar21 and not na(d21) and d21 >= charThr21 ? 1 : na, '21 extended', char21, location.abovebar, charCol21, size = size.small)
+plotchar(showChar50 and not na(d50) and d50 >= charThr50 ? 1 : na, '50 extended', char50, location.abovebar, charCol50, size = size.small)
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Table
+// ═════════════════════════════════════════════════════════════════════════════
+posConst = switch tPos
+    'Top Left'     => position.top_left
+    'Top Right'    => position.top_right
+    'Middle Right' => position.middle_right
+    'Bottom Left'  => position.bottom_left
+    'Bottom Right' => position.bottom_right
+    => position.bottom_left
+
+fSize = switch tFont
+    'Tiny'   => size.tiny
+    'Small'  => size.small
+    'Normal' => size.normal
+    'Large'  => size.large
+    => size.small
+
+// Row background — text is always black (tTxt).  green = OK, red = caution.
+//   Low / Open / Day- & Body-Range-Expansion : red when the value is negative.
+//   21 / 50 MA distance : red when below the MA (negative) OR more than
+//                         odT21 / odT50 ATR above it (too extended to initiate).
+//   ATR% / ADR% / LoD / price / target rows stay neutral (tBg).
+bgSign(float v)         => na(v) ? tBg : v >= 0 ? colG : colR
+bgMA(float v, float od) => na(v) ? tBg : (v >= 0 and v <= od) ? colG : colR
+
+atrStr(float v) => na(v) ? '—' : str.tostring(v, '0.00') + ' ATR'
+pctStr(float v) => na(v) ? '—' : str.tostring(v, '#')    + '%'
+
+var table t = table.new(posConst, 2, 20, frame_color = color.new(color.black, 55), frame_width = 1, border_color = color.new(color.black, 80), border_width = 1)
+
+f_row(int r, string k, string v, color cellBg) =>
+    table.cell(t, 0, r, k + '  ', text_color = tTxt, text_size = fSize, text_halign = text.align_left, bgcolor = cellBg)
+    table.cell(t, 1, r, v,        text_color = tTxt, text_size = fSize, text_halign = text.align_left, bgcolor = cellBg)
+    r + 1
+
+if barstate.islast and timeframe.period != '1M'
+    table.clear(t, 0, 0, 1, 19)
+    int r = 0
+    if showAtrPct
+        r := f_row(r, 'ATR %',  str.tostring(atrPct, '0.00') + '%', tBg)
+    if showAdrPct
+        r := f_row(r, 'ADR %',  str.tostring(adrPct, '0.00') + '%', tBg)
+    if showAnchLow
+        r := f_row(r, 'Low',    atrStr(anchLow),  bgSign(anchLow))
+    if showAnchOpen
+        r := f_row(r, 'Open',   atrStr(anchOpen), bgSign(anchOpen))
+    if showLodDist
+        r := f_row(r, 'LoD dist', str.tostring(lodDistPct, '0.00') + '%', tBg)
+    if showLodPrice
+        r := f_row(r, 'LoD price', str.tostring(dLow, format.mintick), tBg)
+    if showDist21
+        r := f_row(r, str.tostring(p21) + ' ' + ma21Type, atrStr(d21), bgMA(d21, odT21))
+    if showDist50
+        r := f_row(r, str.tostring(p50) + ' ' + ma50Type, atrStr(d50), bgMA(d50, odT50))
+    if show21Price
+        r := f_row(r, str.tostring(p21) + ' ' + ma21Type + ' price', str.tostring(dma21, format.mintick), tBg)
+    if show50Price
+        r := f_row(r, str.tostring(p50) + ' ' + ma50Type + ' price', str.tostring(dma50, format.mintick), tBg)
+    if showDayExp
+        r := f_row(r, 'Day Range Expansion',  pctStr(dayExp),  bgSign(dayExp))
+    if showBodyExp
+        r := f_row(r, 'Body Range Expansion', pctStr(bodyExp), bgSign(bodyExp))
+    if showExtTgts
+        r := f_row(r, str.tostring(p21) + ' ATR target', str.tostring(extTgt21, format.mintick), tBg)
+        r := f_row(r, str.tostring(p50) + ' ATR target', str.tostring(extTgt50, format.mintick), tBg)
