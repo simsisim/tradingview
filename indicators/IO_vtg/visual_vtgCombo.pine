@@ -30,7 +30,9 @@ showLabels        = input.bool(true,  'Show trigger labels (text tag on the bar)
 labelsCurrentOnly = input.bool(false, 'Show Labels Only on Current Bar')
 showBreakout      = input.bool(false, 'Show Breakout')
 showPreSling      = input.bool(false, 'Show Pre-Slingshot (yellow bars)')
-showSlingshot     = input.bool(true,  'Show Slingshot')
+showSlingshot     = input.bool(true,  'Show Slingshot (4 EMA, High)')
+show4EmaCloseX    = input.bool(false, 'Show 4 EMA Close Cross')
+showSlingClose    = input.bool(false, 'Show Slingshot (4 EMA, Close)')
 show4pct          = input.bool(true,  'Show 4% Breakout')
 showInsideDay     = input.bool(false, 'Show Inside Day')
 showInsideBO      = input.bool(true,  'Show Inside Day Breakout')
@@ -76,6 +78,8 @@ slingEmaLen = input.int(4, 'Slingshot EMA length', minval = 1, group = gS)
 slingEmaSrc = input.string('High', 'Slingshot EMA source', ['High', 'Close'], group = gS, tooltip = 'TAPLOT SlingShot uses the EMA of the highs.')
 slingBars   = input.int(3, 'Pullback bars below EMA', minval = 1, group = gS)
 slingPbSrc  = input.string('Close', 'Pullback test uses', ['Close', 'High'], group = gS, tooltip = 'Close = exact TAPLOT (each of the last N closes below the EMA). High = stricter: the whole bar (its high) stays below the EMA.')
+showSlingEma      = input.bool(true, '4 EMA High: show line on chart',  group = gS, tooltip = 'Plots the EMA used internally by Slingshot (4 EMA, High) as a visible line, separate from the 21 EMA cloud/line and 50 SMA below. This is a chart LINE toggle only — the trigger itself (bar colour / label) is switched on/off above via "Show Slingshot (4 EMA, High)".')
+showSlingEmaClose = input.bool(true, '4 EMA Close: show line on chart', group = gS, tooltip = 'Plots the Close-based 4 EMA (used by the two Close variants above) as a visible line. Chart LINE toggle only — the triggers themselves are switched on/off above via "Show 4 EMA Close Cross" / "Show Slingshot (4 EMA, Close)".')
 
 gID = 'Inside Day'
 idBoWindow  = input.int(3, 'Breakout window (bars after the inside day)', minval = 1, group = gID, tooltip = 'The inside day breakout counts if price clears the inside day range within this many bars. 1 = only the very next bar.')
@@ -109,6 +113,8 @@ boUseTrend  = input.bool(true, 'N-day: require close above trend SMA', group = g
 // (Pine `barcolor()` colours can't live in the Style tab, so they are here.)
 gCol = 'Trigger colours'
 colSling  = input.color(#26a69a,       'Slingshot',            group = gCol)
+col4EmaCloseX = input.color(#ab47bc,   '4 EMA Close Cross',       group = gCol)
+colSlingClose = input.color(#7e57c2,   'Slingshot (4 EMA Close)', group = gCol)
 colBreak  = input.color(#00897b,       'Breakout (composite)', group = gCol)
 colPre    = input.color(color.yellow,  'Pre-Slingshot',        group = gCol)
 col4pct   = input.color(#64dd17,       '4% Breakout',          group = gCol)
@@ -124,11 +130,13 @@ colKick   = input.color(#26a69a,       'Kicker',               group = gCol)
 col3Bar   = input.color(#26a69a,       '3-Bar Break',          group = gCol)
 colEng    = input.color(#9e9e9e,       'Engulf',               group = gCol)
 colNday   = input.color(#00897b,       'N-day High Breakout',  group = gCol)
+colMulti  = input.color(color.fuchsia, 'Multiple Triggers (2+, magenta)', group = gCol, tooltip = 'Bar colour and merged label colour whenever 2 or more selected triggers fire on the same bar — overrides the individual trigger colours above so a multi-trigger bar is always visually distinct.')
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Engine
 // ═════════════════════════════════════════════════════════════════════════════
-slingEma = ta.ema(slingEmaSrc == 'High' ? high : close, slingEmaLen)
+slingEma      = ta.ema(slingEmaSrc == 'High' ? high : close, slingEmaLen)
+slingEmaClose = ta.ema(close, slingEmaLen)   // always Close-based, independent of slingEmaSrc — feeds the two Close variants below
 emaLine = ta.ema(close, emaLineLen)
 sma     = ta.sma(close, smaLen)
 emaHi   = ta.ema(high,  cloudLen)
@@ -169,6 +177,15 @@ f_confDn(float lvl) =>
 slingPbVal = slingPbSrc == 'High' ? high : close
 pulledBack = ta.highest(slingPbVal - slingEma, slingBars)[1] < 0
 slingshot  = pulledBack and f_confUp(slingEma)
+
+// ── 4 EMA Close Cross — simple cross of the Close-based 4 EMA, no pullback
+//    required. Looser and fires earlier than Slingshot.
+ema4CloseCross = f_confUp(slingEmaClose) and close[1] <= slingEmaClose[1]
+
+// ── Slingshot (4 EMA Close) — identical pullback-then-reclaim structure to
+//    Slingshot above, tested against the Close-based 4 EMA instead of High.
+pulledBackClose = ta.highest(slingPbVal - slingEmaClose, slingBars)[1] < 0
+slingshotClose  = pulledBackClose and f_confUp(slingEmaClose)
 
 // ── Pre-Slingshot — below the short EMA, uptrend intact, coiled near the trigger
 trendUp  = slingEma > slingEma[preTrendLook]
@@ -226,12 +243,21 @@ atrOver100  = not na(atrMove) and atrMove >= 1.0
 atrUnder100 = not na(atrMove) and atrMove <  1.0
 
 // ── Extras (Kicker + 3-Bar Break match indicators/dashboard/dashboard.pine)
+// ta.* calls pulled out of the conditional expressions below (CW10002) — a
+// ta.* call inside an and/or short-circuit may not run every bar, which is
+// unsafe for functions that depend on their own history.
+hi3       = ta.highest(high[1], 3)
+lo3       = ta.lowest(low[1], 3)
+hiNday    = ta.highest(high, boPrice)[1]
+volHiNday = ta.highest(volume, boVol)[1]
+trendSma  = ta.sma(close, boTrend)
+
 superOops = open < low[1] and f_confUp(high[1])
 kicker    = close[1] < open[1] and open > open[1]                        // prior bar bearish, today opens above prior open
-b3Up      = high[1] < high[3] and f_confUp(ta.highest(high[1], 3))       // recent lower high, then close clears last 3 highs
-b3Dn      = low[1]  > low[3]  and f_confDn(ta.lowest(low[1], 3))         // recent higher low,  then close breaks last 3 lows
+b3Up      = high[1] < high[3] and f_confUp(hi3)                          // recent lower high, then close clears last 3 highs
+b3Dn      = low[1]  > low[3]  and f_confDn(lo3)                          // recent higher low,  then close breaks last 3 lows
 engulf    = high > high[1] and low < low[1]
-ndayBO    = f_confUp(ta.highest(high, boPrice)[1]) and (not boUseVol or volume > ta.highest(volume, boVol)[1]) and (not boUseTrend or close > ta.sma(close, boTrend))
+ndayBO    = f_confUp(hiNday) and (not boUseVol or volume > volHiNday) and (not boUseTrend or close > trendSma)
 
 // ── Composite "Breakout Triggered"
 breakoutEdges = slingshot or fourPct or idBreakUp or oel
@@ -245,64 +271,131 @@ pBot = plot(showCloud ? emaLo : na, 'EMA cloud bottom', color.new(color.blue, 75
 fill(pTop, pBot, color.new(color.blue, 92), 'EMA cloud')
 plot(showEma ? emaLine : na, 'EMA line', color.new(color.green, 0), linewidth = 2)
 plot(showSma ? sma     : na, 'SMA line', color.new(color.red,   0), linewidth = 2)
+plot(showSlingEma ? slingEma : na, '4 EMA (Slingshot)', color.new(color.orange, 0), linewidth = 1)
+plot(showSlingEmaClose ? slingEmaClose : na, '4 EMA (Close)', color.new(color.purple, 0), linewidth = 1)
 
-// ── Signal colour — the highest-priority firing method (priority = list order).
-sigCol = showSlingshot and slingshot                ? colSling  :
-   showBreakout  and breakoutTrig                   ? colBreak  :
-   showPreSling  and preSling                       ? colPre    :
-   show4pct      and fourPct                        ? col4pct   :
-   showInsideBO  and (idBreakUp or idBreakDn)       ? colIdBo   :
-   showInsideDay and insideDay                      ? colInside :
-   showOops      and (oopsUp or oopsDn)             ? colOops   :
-   showSuperOops and superOops                      ? colSuper  :
-   showOEL       and oel                            ? colOel    :
-   showOEH       and oeh                            ? colOeh    :
-   showKicker    and kicker                         ? colKick   :
-   show3Bar      and (b3Up or b3Dn)                 ? col3Bar   :
-   showEngulf    and engulf                         ? colEng    :
-   showNdayBO    and ndayBO                         ? colNday   :
-   showAtrOver   and atrOver100                     ? colAtrOv  :
-   showAtrUnder  and atrUnder100                    ? colAtrUn  : na
-
-// ── Paint the trigger bar (single barcolor, like TAPLOT). Independent of labels.
-barcolor(paintBars ? sigCol : na, title = 'Trigger bar')
-
-// ── Trigger labels — one small tag per firing method, STACKED above the candle
-//    (each keeps its own method colour). Historical + current. Independent of
-//    bar painting. Shows on every bar unless "Show Labels Only on Current Bar".
+// ── Merge every firing trigger into ONE tag + ONE colour per bar.
+//    Why not stack one label per trigger (the old approach): that used
+//    ATR-based vertical offsets, but label height is fixed in PIXELS while
+//    the offset is in PRICE units — depending on the chart's y-axis zoom/
+//    autoscale, the same ATR gap can render as a wide gap or almost nothing,
+//    so stacked labels can still overlap in practice. A single merged label
+//    per bar removes the stacking problem entirely, and this same builder
+//    also drives the bar colour so the two can never disagree.
 labelOK  = showLabels and (not labelsCurrentOnly or barstate.islast)
-labelGap = input.float(0.4, 'Label stack spacing (× ATR)', minval = 0.05, group = gCol)
+labelGap = input.float(0.4, 'Label offset above the bar (× ATR)', minval = 0.05, group = gCol)
 gapY     = nz(atr, close * 0.02) * labelGap
 
 f_txt(color bg) =>
     lum = 0.299 * color.r(bg) + 0.587 * color.g(bg) + 0.114 * color.b(bg)
     labelTextAuto ? (lum > 150 ? color.black : color.white) : color.white
 
-f_tag(int slot, bool cond, string txt, color c) =>
-    s = slot
-    if cond and labelOK
-        label.new(bar_index, high + gapY + slot * gapY, txt, yloc = yloc.price, style = label.style_label_down, color = color.new(c, 0), textcolor = f_txt(c), size = size.small)
-        s := slot + 1
-    s
+// Builds (tag, colour-of-first-fired, count) across every condition that
+// fired, in priority order. Plain if-blocks at script scope reassigning
+// these vars with `:=` — same pattern as `idHi := high` above.
+string fireTag   = na
+color  fireCol   = na
+int    fireCount = 0
 
-slot = 0
-slot := f_tag(slot, showSlingshot and slingshot,      'Slingshot',     colSling)
-slot := f_tag(slot, showBreakout  and breakoutTrig,   'Breakout',      colBreak)
-slot := f_tag(slot, showPreSling  and preSling,       'Pre-Slingshot', colPre)
-slot := f_tag(slot, show4pct      and fourPct,        '4%',            col4pct)
-slot := f_tag(slot, showInsideBO  and idBreakUp,      'ID Break+',     colIdBo)
-slot := f_tag(slot, showInsideBO  and idBreakDn,      'ID Break-',     colIdBo)
-slot := f_tag(slot, showInsideDay and insideDay,      'Inside',        colInside)
-slot := f_tag(slot, showOops      and oopsUp,         'Oops+',         colOops)
-slot := f_tag(slot, showOops      and oopsDn,         'Oops-',         colOops)
-slot := f_tag(slot, showSuperOops and superOops,      'Super Oops',    colSuper)
-slot := f_tag(slot, showOEL       and oel,            'OEL',           colOel)
-slot := f_tag(slot, showOEH       and oeh,            'OEH',           colOeh)
-slot := f_tag(slot, showKicker    and kicker,         'Kicker',        colKick)
-slot := f_tag(slot, show3Bar      and b3Up,           '3Bar+',         col3Bar)
-slot := f_tag(slot, show3Bar      and b3Dn,           '3Bar-',         col3Bar)
-slot := f_tag(slot, showEngulf    and engulf,         'Engulf',        colEng)
-slot := f_tag(slot, showNdayBO    and ndayBO,         'BO ' + str.tostring(boPrice) + 'd', colNday)
+if showSlingshot and slingshot
+    fireTag   := na(fireTag) ? 'Slingshot' : fireTag + ' + Slingshot'
+    fireCol   := na(fireCol) ? colSling : fireCol
+    fireCount += 1
+if show4EmaCloseX and ema4CloseCross
+    fireTag   := na(fireTag) ? '4EMA Close X' : fireTag + ' + 4EMA Close X'
+    fireCol   := na(fireCol) ? col4EmaCloseX : fireCol
+    fireCount += 1
+if showSlingClose and slingshotClose
+    fireTag   := na(fireTag) ? 'Slingshot (Close)' : fireTag + ' + Slingshot (Close)'
+    fireCol   := na(fireCol) ? colSlingClose : fireCol
+    fireCount += 1
+if showBreakout and breakoutTrig
+    fireTag   := na(fireTag) ? 'Breakout' : fireTag + ' + Breakout'
+    fireCol   := na(fireCol) ? colBreak : fireCol
+    fireCount += 1
+if showPreSling and preSling
+    fireTag   := na(fireTag) ? 'Pre-Slingshot' : fireTag + ' + Pre-Slingshot'
+    fireCol   := na(fireCol) ? colPre : fireCol
+    fireCount += 1
+if show4pct and fourPct
+    fireTag   := na(fireTag) ? '4%' : fireTag + ' + 4%'
+    fireCol   := na(fireCol) ? col4pct : fireCol
+    fireCount += 1
+if showInsideBO and idBreakUp
+    fireTag   := na(fireTag) ? 'ID Break+' : fireTag + ' + ID Break+'
+    fireCol   := na(fireCol) ? colIdBo : fireCol
+    fireCount += 1
+if showInsideBO and idBreakDn
+    fireTag   := na(fireTag) ? 'ID Break-' : fireTag + ' + ID Break-'
+    fireCol   := na(fireCol) ? colIdBo : fireCol
+    fireCount += 1
+if showInsideDay and insideDay
+    fireTag   := na(fireTag) ? 'Inside' : fireTag + ' + Inside'
+    fireCol   := na(fireCol) ? colInside : fireCol
+    fireCount += 1
+if showOops and oopsUp
+    fireTag   := na(fireTag) ? 'Oops+' : fireTag + ' + Oops+'
+    fireCol   := na(fireCol) ? colOops : fireCol
+    fireCount += 1
+if showOops and oopsDn
+    fireTag   := na(fireTag) ? 'Oops-' : fireTag + ' + Oops-'
+    fireCol   := na(fireCol) ? colOops : fireCol
+    fireCount += 1
+if showSuperOops and superOops
+    fireTag   := na(fireTag) ? 'Super Oops' : fireTag + ' + Super Oops'
+    fireCol   := na(fireCol) ? colSuper : fireCol
+    fireCount += 1
+if showOEL and oel
+    fireTag   := na(fireTag) ? 'OEL' : fireTag + ' + OEL'
+    fireCol   := na(fireCol) ? colOel : fireCol
+    fireCount += 1
+if showOEH and oeh
+    fireTag   := na(fireTag) ? 'OEH' : fireTag + ' + OEH'
+    fireCol   := na(fireCol) ? colOeh : fireCol
+    fireCount += 1
+if showKicker and kicker
+    fireTag   := na(fireTag) ? 'Kicker' : fireTag + ' + Kicker'
+    fireCol   := na(fireCol) ? colKick : fireCol
+    fireCount += 1
+if show3Bar and b3Up
+    fireTag   := na(fireTag) ? '3Bar+' : fireTag + ' + 3Bar+'
+    fireCol   := na(fireCol) ? col3Bar : fireCol
+    fireCount += 1
+if show3Bar and b3Dn
+    fireTag   := na(fireTag) ? '3Bar-' : fireTag + ' + 3Bar-'
+    fireCol   := na(fireCol) ? col3Bar : fireCol
+    fireCount += 1
+if showEngulf and engulf
+    fireTag   := na(fireTag) ? 'Engulf' : fireTag + ' + Engulf'
+    fireCol   := na(fireCol) ? colEng : fireCol
+    fireCount += 1
+if showNdayBO and ndayBO
+    ndayTxt = 'BO ' + str.tostring(boPrice) + 'd'
+    fireTag   := na(fireTag) ? ndayTxt : fireTag + ' + ' + ndayTxt
+    fireCol   := na(fireCol) ? colNday : fireCol
+    fireCount += 1
+if showAtrOver and atrOver100
+    fireTag   := na(fireTag) ? 'ATR 100%+' : fireTag + ' + ATR 100%+'
+    fireCol   := na(fireCol) ? colAtrOv : fireCol
+    fireCount += 1
+if showAtrUnder and atrUnder100
+    fireTag   := na(fireTag) ? 'ATR < 100%' : fireTag + ' + ATR < 100%'
+    fireCol   := na(fireCol) ? colAtrUn : fireCol
+    fireCount += 1
+
+isMulti = fireCount >= 2
+sigCol  = isMulti ? colMulti : fireCol   // 0 fired -> na, 1 -> its own colour, 2+ -> colMulti
+
+// ── Paint the trigger bar (single barcolor, like TAPLOT). Independent of labels.
+barcolor(paintBars ? sigCol : na, title = 'Trigger bar')
+
+// ── Trigger label — ONE label per bar: every fired trigger's name joined with
+//    " + ", coloured colMulti when 2+ fired (always matches the bar colour),
+//    else the single trigger's own colour. Historical + current unless
+//    "Show Labels Only on Current Bar".
+if labelOK and not na(fireTag)
+    lblCol = isMulti ? colMulti : fireCol
+    label.new(bar_index, high + gapY, fireTag, yloc = yloc.price, style = label.style_label_down, color = color.new(lblCol, 0), textcolor = f_txt(lblCol), size = size.small)
 
 // ── ATR-extension table
 posConst = switch tablePos
@@ -327,7 +420,9 @@ if barstate.islast and showExtTable
 // (the screener reads plots — see the plotchar block below). Not gated by the
 // "Show *" switches.
 // ═════════════════════════════════════════════════════════════════════════════
-alertcondition(slingshot,    'Slingshot Triggered',            'VTG: Slingshot {{ticker}}')
+alertcondition(slingshot,       'Slingshot Triggered',              'VTG: Slingshot {{ticker}}')
+alertcondition(ema4CloseCross,  '4 EMA Close Cross Triggered',      'VTG: 4 EMA Close Cross {{ticker}}')
+alertcondition(slingshotClose,  'Slingshot (4 EMA Close) Triggered','VTG: Slingshot Close {{ticker}}')
 alertcondition(breakoutTrig, 'Breakout Triggered',             'VTG: Breakout {{ticker}}')
 alertcondition(fourPct,      '4% Breakout Triggered',          'VTG: 4% Breakout {{ticker}}')
 alertcondition(preSling,     'Pre-Slingshot Triggered',        'VTG: Pre-Slingshot {{ticker}}')
@@ -367,6 +462,8 @@ alertcondition(ndayBO,       'N-day High Breakout',            'VTG: N-day High 
 
 // ── Trigger columns  (1 = fired on the last bar, 0 = not) ────────────────────
 plot(slingshot    ? 1 : 0, 'Slingshot',            display = display.none, editable = false)
+plot(ema4CloseCross ? 1 : 0, '4 EMA Close Cross',       display = display.none, editable = false)
+plot(slingshotClose ? 1 : 0, 'Slingshot (4 EMA Close)', display = display.none, editable = false)
 plot(breakoutTrig ? 1 : 0, 'Breakout',             display = display.none, editable = false)
 plot(fourPct      ? 1 : 0, '4% Breakout',          display = display.none, editable = false)
 plot(preSling     ? 1 : 0, 'Pre-Slingshot',        display = display.none, editable = false)
