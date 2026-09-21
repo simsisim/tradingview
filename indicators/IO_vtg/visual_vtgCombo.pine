@@ -48,6 +48,9 @@ show3Bar    = input.bool(false, 'Show 3-Bar Break')
 showOEH     = input.bool(false, 'Show OEH')
 showEngulf  = input.bool(false, 'Show Engulf')
 showNdayBO  = input.bool(false, 'Show N-day High Breakout')
+showBoCandle = input.bool(false, 'Show Breakout Candle (live)')
+
+showAllTriggers = input.bool(false, 'Show All (overrides every "Show *" toggle above)', tooltip = 'When on, every trigger paints its bar / draws its label regardless of the individual Show switches above.')
 
 inputsInStatus    = input.bool(true,  'Inputs in status line')   // cosmetic (Pine cannot toggle input display at runtime)
 paintBars         = input.bool(true,  'Paint the trigger bar (like TAPLOT)')
@@ -111,6 +114,12 @@ boUseTrend  = input.bool(true, 'N-day: require close above trend SMA', group = g
 
 // Per-method colour — used for BOTH the painted bar and the label background.
 // (Pine `barcolor()` colours can't live in the Style tab, so they are here.)
+gBC = 'Breakout Candle'
+bcTopPct   = input.float(30, 'Close must be in top X% of the bar range', minval = 1, maxval = 100, group = gBC, tooltip = 'Book rule: close within the top 30% of the candle range.')
+bcNeedVol  = input.bool(false, 'Require volume >= average volume', group = gBC, tooltip = 'Book rule: closing volume >= average. On the forming bar volume is still partial, so this can lag intraday.')
+bcVolLen   = input.int(50, 'Average volume length', minval = 1, group = gBC)
+bcNeedEma  = input.bool(false, 'Require 4 EMA (Close) ticking up', group = gBC, tooltip = 'Book rule for continuation breakouts: the 4 EMA must be rising.')
+
 gCol = 'Trigger colours'
 colSling  = input.color(#26a69a,       'Slingshot',            group = gCol)
 col4EmaCloseX = input.color(#ab47bc,   '4 EMA Close Cross',       group = gCol)
@@ -129,8 +138,15 @@ colAtrUn  = input.color(#9e9e9e,       'ATR < 100%',           group = gCol)
 colKick   = input.color(#26a69a,       'Kicker',               group = gCol)
 col3Bar   = input.color(#26a69a,       '3-Bar Break',          group = gCol)
 colEng    = input.color(#9e9e9e,       'Engulf',               group = gCol)
+colBoCandle = input.color(#00e676,     'Breakout Candle',      group = gCol)
 colNday   = input.color(#00897b,       'N-day High Breakout',  group = gCol)
 colMulti  = input.color(color.fuchsia, 'Multiple Triggers (2+, magenta)', group = gCol, tooltip = 'Bar colour and merged label colour whenever 2 or more selected triggers fire on the same bar — overrides the individual trigger colours above so a multi-trigger bar is always visually distinct.')
+
+gLn = 'Line colours'
+colLnSling      = input.color(color.orange, '4 EMA High line',  group = gLn)
+colLnSlingClose = input.color(color.purple, '4 EMA Close line', group = gLn)
+colLnEma        = input.color(color.green,  'EMA line',         group = gLn)
+colLnSma        = input.color(color.red,    'SMA line',         group = gLn)
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Engine
@@ -186,6 +202,16 @@ ema4CloseCross = f_confUp(slingEmaClose) and close[1] <= slingEmaClose[1]
 //    Slingshot above, tested against the Close-based 4 EMA instead of High.
 pulledBackClose = ta.highest(slingPbVal - slingEmaClose, slingBars)[1] < 0
 slingshotClose  = pulledBackClose and f_confUp(slingEmaClose)
+
+// ── Breakout Candle (Oliver Wiedmaier's book, continuation breakout / EP delayed
+//    entry signal) — LIVE: no confirmation gate, evaluated on every tick of the
+//    forming bar with the current close/high/low, so it can appear and disappear
+//    until the bar closes (repaints the forming bar only).
+bcRange   = high - low
+bcTopOk   = bcRange > 0 and (close - low) / bcRange >= 1 - bcTopPct / 100
+boCandle  = close > high[1] and bcRange > (high[1] - low[1]) and bcTopOk
+             and (not bcNeedVol or volume >= ta.sma(volume, bcVolLen))
+             and (not bcNeedEma or slingEmaClose > slingEmaClose[1])
 
 // ── Pre-Slingshot — below the short EMA, uptrend intact, coiled near the trigger
 trendUp  = slingEma > slingEma[preTrendLook]
@@ -269,10 +295,10 @@ breakoutTrig  = compUnder1Atr ? (breakoutEdges and atrUnder100) : breakoutEdges
 pTop = plot(showCloud ? emaHi : na, 'EMA cloud top',    color.new(color.blue, 75))
 pBot = plot(showCloud ? emaLo : na, 'EMA cloud bottom', color.new(color.blue, 75))
 fill(pTop, pBot, color.new(color.blue, 92), 'EMA cloud')
-plot(showEma ? emaLine : na, 'EMA line', color.new(color.green, 0), linewidth = 2)
-plot(showSma ? sma     : na, 'SMA line', color.new(color.red,   0), linewidth = 2)
-plot(showSlingEma ? slingEma : na, '4 EMA (Slingshot)', color.new(color.orange, 0), linewidth = 1)
-plot(showSlingEmaClose ? slingEmaClose : na, '4 EMA (Close)', color.new(color.purple, 0), linewidth = 1)
+plot(showEma ? emaLine : na, 'EMA line', colLnEma, linewidth = 2)
+plot(showSma ? sma     : na, 'SMA line', colLnSma, linewidth = 2)
+plot(showSlingEma ? slingEma : na, '4 EMA (Slingshot)', colLnSling, linewidth = 1)
+plot(showSlingEmaClose ? slingEmaClose : na, '4 EMA (Close)', colLnSlingClose, linewidth = 1)
 
 // ── Merge every firing trigger into ONE tag + ONE colour per bar.
 //    Why not stack one label per trigger (the old approach): that used
@@ -297,88 +323,92 @@ string fireTag   = na
 color  fireCol   = na
 int    fireCount = 0
 
-if showSlingshot and slingshot
+if (showAllTriggers or showSlingshot) and slingshot
     fireTag   := na(fireTag) ? 'Slingshot' : fireTag + ' + Slingshot'
     fireCol   := na(fireCol) ? colSling : fireCol
     fireCount += 1
-if show4EmaCloseX and ema4CloseCross
+if (showAllTriggers or show4EmaCloseX) and ema4CloseCross
     fireTag   := na(fireTag) ? '4EMA Close X' : fireTag + ' + 4EMA Close X'
     fireCol   := na(fireCol) ? col4EmaCloseX : fireCol
     fireCount += 1
-if showSlingClose and slingshotClose
+if (showAllTriggers or showSlingClose) and slingshotClose
     fireTag   := na(fireTag) ? 'Slingshot (Close)' : fireTag + ' + Slingshot (Close)'
     fireCol   := na(fireCol) ? colSlingClose : fireCol
     fireCount += 1
-if showBreakout and breakoutTrig
+if (showAllTriggers or showBreakout) and breakoutTrig
     fireTag   := na(fireTag) ? 'Breakout' : fireTag + ' + Breakout'
     fireCol   := na(fireCol) ? colBreak : fireCol
     fireCount += 1
-if showPreSling and preSling
+if (showAllTriggers or showPreSling) and preSling
     fireTag   := na(fireTag) ? 'Pre-Slingshot' : fireTag + ' + Pre-Slingshot'
     fireCol   := na(fireCol) ? colPre : fireCol
     fireCount += 1
-if show4pct and fourPct
+if (showAllTriggers or showBoCandle) and boCandle
+    fireTag   := na(fireTag) ? 'Breakout Candle' : fireTag + ' + Breakout Candle'
+    fireCol   := na(fireCol) ? colBoCandle : fireCol
+    fireCount += 1
+if (showAllTriggers or show4pct) and fourPct
     fireTag   := na(fireTag) ? '4%' : fireTag + ' + 4%'
     fireCol   := na(fireCol) ? col4pct : fireCol
     fireCount += 1
-if showInsideBO and idBreakUp
+if (showAllTriggers or showInsideBO) and idBreakUp
     fireTag   := na(fireTag) ? 'ID Break+' : fireTag + ' + ID Break+'
     fireCol   := na(fireCol) ? colIdBo : fireCol
     fireCount += 1
-if showInsideBO and idBreakDn
+if (showAllTriggers or showInsideBO) and idBreakDn
     fireTag   := na(fireTag) ? 'ID Break-' : fireTag + ' + ID Break-'
     fireCol   := na(fireCol) ? colIdBo : fireCol
     fireCount += 1
-if showInsideDay and insideDay
+if (showAllTriggers or showInsideDay) and insideDay
     fireTag   := na(fireTag) ? 'Inside' : fireTag + ' + Inside'
     fireCol   := na(fireCol) ? colInside : fireCol
     fireCount += 1
-if showOops and oopsUp
+if (showAllTriggers or showOops) and oopsUp
     fireTag   := na(fireTag) ? 'Oops+' : fireTag + ' + Oops+'
     fireCol   := na(fireCol) ? colOops : fireCol
     fireCount += 1
-if showOops and oopsDn
+if (showAllTriggers or showOops) and oopsDn
     fireTag   := na(fireTag) ? 'Oops-' : fireTag + ' + Oops-'
     fireCol   := na(fireCol) ? colOops : fireCol
     fireCount += 1
-if showSuperOops and superOops
+if (showAllTriggers or showSuperOops) and superOops
     fireTag   := na(fireTag) ? 'Super Oops' : fireTag + ' + Super Oops'
     fireCol   := na(fireCol) ? colSuper : fireCol
     fireCount += 1
-if showOEL and oel
+if (showAllTriggers or showOEL) and oel
     fireTag   := na(fireTag) ? 'OEL' : fireTag + ' + OEL'
     fireCol   := na(fireCol) ? colOel : fireCol
     fireCount += 1
-if showOEH and oeh
+if (showAllTriggers or showOEH) and oeh
     fireTag   := na(fireTag) ? 'OEH' : fireTag + ' + OEH'
     fireCol   := na(fireCol) ? colOeh : fireCol
     fireCount += 1
-if showKicker and kicker
+if (showAllTriggers or showKicker) and kicker
     fireTag   := na(fireTag) ? 'Kicker' : fireTag + ' + Kicker'
     fireCol   := na(fireCol) ? colKick : fireCol
     fireCount += 1
-if show3Bar and b3Up
+if (showAllTriggers or show3Bar) and b3Up
     fireTag   := na(fireTag) ? '3Bar+' : fireTag + ' + 3Bar+'
     fireCol   := na(fireCol) ? col3Bar : fireCol
     fireCount += 1
-if show3Bar and b3Dn
+if (showAllTriggers or show3Bar) and b3Dn
     fireTag   := na(fireTag) ? '3Bar-' : fireTag + ' + 3Bar-'
     fireCol   := na(fireCol) ? col3Bar : fireCol
     fireCount += 1
-if showEngulf and engulf
+if (showAllTriggers or showEngulf) and engulf
     fireTag   := na(fireTag) ? 'Engulf' : fireTag + ' + Engulf'
     fireCol   := na(fireCol) ? colEng : fireCol
     fireCount += 1
-if showNdayBO and ndayBO
+if (showAllTriggers or showNdayBO) and ndayBO
     ndayTxt = 'BO ' + str.tostring(boPrice) + 'd'
     fireTag   := na(fireTag) ? ndayTxt : fireTag + ' + ' + ndayTxt
     fireCol   := na(fireCol) ? colNday : fireCol
     fireCount += 1
-if showAtrOver and atrOver100
+if (showAllTriggers or showAtrOver) and atrOver100
     fireTag   := na(fireTag) ? 'ATR 100%+' : fireTag + ' + ATR 100%+'
     fireCol   := na(fireCol) ? colAtrOv : fireCol
     fireCount += 1
-if showAtrUnder and atrUnder100
+if (showAllTriggers or showAtrUnder) and atrUnder100
     fireTag   := na(fireTag) ? 'ATR < 100%' : fireTag + ' + ATR < 100%'
     fireCol   := na(fireCol) ? colAtrUn : fireCol
     fireCount += 1
@@ -424,6 +454,7 @@ alertcondition(slingshot,       'Slingshot Triggered',              'VTG: Slings
 alertcondition(ema4CloseCross,  '4 EMA Close Cross Triggered',      'VTG: 4 EMA Close Cross {{ticker}}')
 alertcondition(slingshotClose,  'Slingshot (4 EMA Close) Triggered','VTG: Slingshot Close {{ticker}}')
 alertcondition(breakoutTrig, 'Breakout Triggered',             'VTG: Breakout {{ticker}}')
+alertcondition(boCandle,     'Breakout Candle Triggered',      'VTG: Breakout Candle {{ticker}}')
 alertcondition(fourPct,      '4% Breakout Triggered',          'VTG: 4% Breakout {{ticker}}')
 alertcondition(preSling,     'Pre-Slingshot Triggered',        'VTG: Pre-Slingshot {{ticker}}')
 alertcondition(insideDay,    'Inside Day Triggered',           'VTG: Inside Day {{ticker}}')
@@ -465,6 +496,7 @@ plot(slingshot    ? 1 : 0, 'Slingshot',            display = display.none, edita
 plot(ema4CloseCross ? 1 : 0, '4 EMA Close Cross',       display = display.none, editable = false)
 plot(slingshotClose ? 1 : 0, 'Slingshot (4 EMA Close)', display = display.none, editable = false)
 plot(breakoutTrig ? 1 : 0, 'Breakout',             display = display.none, editable = false)
+plot(boCandle     ? 1 : 0, 'Breakout Candle',      display = display.none, editable = false)
 plot(fourPct      ? 1 : 0, '4% Breakout',          display = display.none, editable = false)
 plot(preSling     ? 1 : 0, 'Pre-Slingshot',        display = display.none, editable = false)
 plot(insideDay    ? 1 : 0, 'Inside Day',           display = display.none, editable = false)
