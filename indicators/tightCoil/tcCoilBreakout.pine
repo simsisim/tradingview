@@ -1,0 +1,268 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © simsisim
+//
+// s-TC Coil Breakout — "Best actual breakout: tight coil under resistance, then
+// breakout" card as an indicator + Pine Screener source.
+// (card: gd_systems/tradying_voyage/HS7qCHxbMAAaN8g.jpeg)
+//
+//   Range   : resistance = highest high / support = lowest low of the N bars
+//             BEFORE the coil (the "daily range").
+//   Coil    : a short 3–5 bar coil that tightens JUST UNDER resistance —
+//             small candles, tight closes, coil high near the level, no close
+//             above it yet.
+//   Breakout: the bar after a qualified coil closes above resistance
+//             (and the coil high), strong close, volume.
+//   Failed  : the card's warning side — the bar pokes above resistance
+//   poke      intraday but CLOSES back inside the range. Looks like a
+//             breakout on a lower timeframe, still just a move inside the
+//             daily range.
+//
+// Every threshold is our own reading of the card — tune freely.
+// No request.* -> screener-safe. Built for the Daily chart.
+//
+//@version=6
+indicator('s-TC Coil Breakout', 'TC Coil', overlay = true, max_labels_count = 500, max_boxes_count = 200, max_lines_count = 10)
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Inputs
+// ═════════════════════════════════════════════════════════════════════════════
+gShow = 'Signals'
+showBO     = input.bool(true, 'Show Coil Breakout',                       group = gShow)
+showFake   = input.bool(true, 'Show Failed Poke (closed back inside range)', group = gShow)
+showBox    = input.bool(true, 'Box the coil (live while forming + on each breakout)', group = gShow)
+showLevels = input.bool(true, 'Draw resistance / support lines',          group = gShow)
+
+gDisp = 'Display'
+showLabels        = input.bool(true,  'Show trigger labels',                      group = gDisp)
+labelsCurrentOnly = input.bool(false, 'Labels only on current bar',               group = gDisp)
+paintBars         = input.bool(true,  'Paint the trigger bar',                    group = gDisp)
+labelTextAuto     = input.bool(true,  'Label text auto black/white for contrast', group = gDisp)
+labelGap          = input.float(0.5,  'Label stack spacing (× ATR)', minval = 0.05, group = gDisp)
+
+gRes = 'Range (resistance / support)'
+resLen    = input.int(60, 'Range lookback (bars before the coil)', minval = 5, group = gRes)
+resMinAge = input.int(5,  'Resistance high set >= N bars before the coil', minval = 0, group = gRes, tooltip = 'Makes the level a real prior ceiling, not just the last bar of a run-up. 0 = off.')
+
+gCoil = 'Coil (3–5 day tight coil just under resistance)'
+coilMin    = input.int(3,      'Coil length min (bars)', minval = 2, group = gCoil)
+coilMax    = input.int(5,      'Coil length max (bars)', minval = 2, group = gCoil, tooltip = 'Every length from min to max is tested; the LONGEST one that qualifies is kept.')
+coilRangeK = input.float(1.5,  'Coil high − low <= (× ATR)',             minval = 0, step = 0.05, group = gCoil)
+coilSpanK  = input.float(1.0,  'Coil close span <= (× ATR)',             minval = 0, step = 0.05, group = gCoil)
+coilBarK   = input.float(0.9,  'Average coil candle <= (× ATR), 0 = off', minval = 0, step = 0.05, group = gCoil, tooltip = 'Small candles — the coil bars are quieter than normal.')
+nearK      = input.float(0.5,  'Coil high within (× ATR) below resistance', minval = 0, step = 0.05, group = gCoil, tooltip = '"Just under resistance".')
+pokeK      = input.float(0.25, 'Coil high may poke above by (× ATR)',    minval = 0, step = 0.05, group = gCoil, tooltip = 'Wicks through the level are allowed; closes must stay at or below it.')
+needTrend  = input.bool(false, 'Require close above the trend SMA',     group = gCoil)
+trendLen   = input.int(50,     'Trend SMA length', minval = 1,          group = gCoil)
+
+gBO = 'Breakout'
+boClearCoil = input.bool(true, 'Close must also clear the coil high', group = gBO)
+boTopPct    = input.float(50,  'Close in top X% of the bar',          minval = 1, maxval = 100, group = gBO)
+boVolMult   = input.float(1.0, 'Volume >= (× average), 0 = off',      minval = 0, step = 0.1, group = gBO)
+boVolLen    = input.int(50,    'Average volume length',               minval = 1, group = gBO)
+confirmBody = input.bool(false, 'Needs the whole body above the level (else the close)', group = gBO)
+
+gGen = 'General'
+atrLen   = input.int(14, 'ATR length', minval = 1, group = gGen)
+cooldown = input.int(3,  'Min bars between signals (per signal)', minval = 0, group = gGen)
+
+gTbl = 'Table'
+showTable = input.bool(true, 'Show coil table', group = gTbl)
+tablePos  = input.string('Bottom Right', 'Table position', ['Top Left', 'Top Right', 'Bottom Left', 'Bottom Right'], group = gTbl)
+tblBg     = input.color(#cfd8dc,     'Table background', group = gTbl)
+tblTx     = input.color(color.black, 'Table text',       group = gTbl)
+colGood   = input.color(#66bb6a, 'Good',    group = gTbl, inline = 'c')
+colWarn   = input.color(#f9a825, 'Neutral', group = gTbl, inline = 'c')
+colBad    = input.color(#ef5350, 'Bad',     group = gTbl, inline = 'c')
+
+gCol = 'Colours  (painted bar + label background)'
+colBO   = input.color(#00c853, 'Coil Breakout', group = gCol)
+colFake = input.color(#ff5252, 'Failed Poke',   group = gCol)
+colBox  = input.color(#ffb300, 'Coil box',      group = gCol)
+colRes  = input.color(#d32f2f, 'Resistance',    group = gCol)
+colSup  = input.color(#1565c0, 'Support',       group = gCol)
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Engine
+// ═════════════════════════════════════════════════════════════════════════════
+ok(float x) => not na(x) and x != 0
+brk(float lvl) => (confirmBody ? math.min(open, close) : close) > lvl
+
+atr      = ta.atr(atrLen)
+rng      = high - low
+volAvg   = ta.sma(volume, boVolLen)
+trendSma = ta.sma(close, trendLen)
+resSer   = ta.highest(high, resLen)
+resBarsB = -ta.highestbars(high, resLen)   // bars back from this bar to the range high
+supSer   = ta.lowest(low, resLen)
+coilTop  = math.max(coilMax, coilMin)
+
+// Longest qualifying coil ending on this bar. For a coil of n bars (offsets
+// 0..n-1) the range is measured on the bars before it, i.e. the window ending at [n].
+f_coil() =>
+    bool  found = false
+    int   bestN = 0
+    float cHi   = na
+    float cLo   = na
+    float cRes  = na
+    float cSup  = na
+    float cRngA = na
+    if ok(atr)
+        float hiH  = high
+        float loL  = low
+        float hiC  = close
+        float loC  = close
+        float sumR = rng
+        for i = 1 to coilTop - 1
+            hiH  := math.max(hiH, high[i])
+            loL  := math.min(loL, low[i])
+            hiC  := math.max(hiC, close[i])
+            loC  := math.min(loC, close[i])
+            sumR += rng[i]
+            n = i + 1
+            if n >= coilMin
+                r   = resSer[n]
+                age = resBarsB[n] + 1          // gap from the range high to the first coil bar
+                pass = not na(r)
+                     and age >= resMinAge
+                     and hiH - loL <= coilRangeK * atr                    // tight coil
+                     and hiC - loC <= coilSpanK * atr                     // tight closes
+                     and (coilBarK == 0 or sumR / n <= coilBarK * atr)    // small candles
+                     and hiH >= r - nearK * atr                           // just under resistance
+                     and hiH <= r + pokeK * atr                           // wicks may poke a little
+                     and hiC <= r                                         // no close above it yet
+                if pass
+                    found := true
+                    bestN := n
+                    cHi   := hiH
+                    cLo   := loL
+                    cRes  := r
+                    cSup  := supSer[n]
+                    cRngA := (hiH - loL) / atr
+    [found, bestN, cHi, cLo, cRes, cSup, cRngA]
+
+[coilRaw, coilN, coilHi, coilLo, coilRes, coilSup, coilRngAtr] = f_coil()
+coil = coilRaw and (not needTrend or close > trendSma)
+
+boLevel  = boClearCoil ? math.max(coilRes[1], coilHi[1]) : coilRes[1]
+boRaw    = coil[1] and brk(boLevel)
+           and rng > 0 and (close - low) / rng >= 1 - boTopPct / 100
+           and (boVolMult == 0 or (ok(volAvg) and volume >= boVolMult * volAvg))
+fakeRaw  = coil[1] and high > coilRes[1] and close <= coilRes[1]
+
+// ── Per-signal cooldown (one call site each -> own persistent counter) ─────
+f_gate(bool raw) =>
+    var int since = na
+    ready = na(since) or since >= cooldown
+    fired = raw and ready
+    since := fired ? 0 : na(since) ? na : since + 1
+    fired
+
+boFired   = f_gate(boRaw)        // ungated by Show switches (screener needs them)
+fakeFired = f_gate(fakeRaw)
+boSig     = showBO and boFired
+fakeSig   = showFake and fakeFired
+
+// Current range (prior resLen bars, excluding this bar); the coil's own levels win while coiling.
+resNow = coil ? coilRes : resSer[1]
+supNow = coil ? coilSup : supSer[1]
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Visuals
+// ═════════════════════════════════════════════════════════════════════════════
+sigCol = boSig ? colBO : fakeSig ? colFake : na
+barcolor(paintBars ? sigCol : na, title = 'Trigger bar')
+
+labelOK = showLabels and (not labelsCurrentOnly or barstate.islast)
+gapY    = nz(atr, close * 0.02) * labelGap
+
+f_txt(color bg) =>
+    lum = 0.299 * color.r(bg) + 0.587 * color.g(bg) + 0.114 * color.b(bg)
+    labelTextAuto ? (lum > 150 ? color.black : color.white) : color.white
+
+if labelOK and boSig
+    label.new(bar_index, high + gapY, 'TC Coil BO', style = label.style_label_down, color = colBO, textcolor = f_txt(colBO), size = size.small)
+if labelOK and fakeSig
+    label.new(bar_index, high + gapY, 'TC Failed Poke', style = label.style_label_down, color = colFake, textcolor = f_txt(colFake), size = size.small)
+
+if showBox and boSig
+    box.new(bar_index - coilN[1], coilHi[1], bar_index - 1, coilLo[1], border_color = color.new(colBox, 0), border_style = line.style_dashed, bgcolor = color.new(colBox, 85))
+
+var box  liveBox = na
+var line resLine = na
+var line supLine = na
+if barstate.islast
+    box.delete(liveBox)
+    line.delete(resLine)
+    line.delete(supLine)
+    liveBox := na
+    if showBox and coil
+        liveBox := box.new(bar_index - coilN + 1, coilHi, bar_index, coilLo, border_color = color.new(colBox, 0), border_style = line.style_dashed, bgcolor = color.new(colBox, 80))
+    if showLevels and not na(resNow)
+        x1 = bar_index - resLen
+        resLine := line.new(x1, resNow, bar_index + 5, resNow, color = colRes, width = 2)
+        supLine := line.new(x1, supNow, bar_index + 5, supNow, color = colSup, width = 2)
+
+// ── Table ───────────────────────────────────────────────────────────────────
+posConst = switch tablePos
+    'Top Left'     => position.top_left
+    'Top Right'    => position.top_right
+    'Bottom Left'  => position.bottom_left
+    => position.bottom_right
+
+distResAtr = ok(atr) and not na(resNow) ? (resNow - close) / atr : na
+distResPct = close != 0 and not na(resNow) ? (resNow - close) / close * 100 : na
+rangePos   = not na(resNow) and resNow != supNow ? (close - supNow) / (resNow - supNow) * 100 : na
+
+stateStr = boFired ? 'BREAKOUT' : fakeFired ? 'Failed poke' : coil ? 'Coiling under resistance' :
+           na(rangePos) ? '—' : rangePos > 100 ? 'Above range' : rangePos < 0 ? 'Below range' : 'Inside range'
+stateCol = boFired ? colGood : fakeFired ? colBad : coil ? colWarn : tblBg
+
+var string lastSig = na
+var int    lastBar = na
+if boFired or fakeFired
+    lastSig := boFired ? 'Coil BO' : 'Failed poke'
+    lastBar := bar_index
+lastStr = na(lastSig) ? '—' : lastSig + ' (' + str.tostring(bar_index - lastBar) + 'b ago)'
+
+var table t = table.new(posConst, 2, 8, frame_color = color.new(color.black, 55), frame_width = 1, border_color = color.new(color.black, 80), border_width = 1)
+
+f_row(int r, string k, string v, color bg) =>
+    table.cell(t, 0, r, k + '  ', text_color = tblTx, text_size = size.small, text_halign = text.align_left, bgcolor = bg)
+    table.cell(t, 1, r, v,        text_color = tblTx, text_size = size.small, text_halign = text.align_left, bgcolor = bg)
+    r + 1
+
+f_px(float v) => na(v) ? '—' : str.tostring(v, format.mintick)
+
+if barstate.islast and showTable
+    table.clear(t, 0, 0, 1, 7)
+    int r = 0
+    r := f_row(r, 'State', stateStr, stateCol)
+    r := f_row(r, 'Resistance', f_px(resNow) + (na(distResAtr) ? '' : '  (' + str.tostring(distResAtr, '0.00') + ' ATR / ' + str.tostring(distResPct, '0.0') + '%)'), na(distResAtr) ? tblBg : distResAtr < 0 ? colGood : distResAtr <= nearK ? colWarn : tblBg)
+    r := f_row(r, 'Support', f_px(supNow), tblBg)
+    r := f_row(r, 'Range position', na(rangePos) ? '—' : str.tostring(rangePos, '0') + '%', tblBg)
+    r := f_row(r, 'Coil', coil ? 'YES  ' + str.tostring(coilN) + ' bars' : '—', coil ? colGood : tblBg)
+    r := f_row(r, 'Coil range', na(coilRngAtr) ? '—' : str.tostring(coilRngAtr, '0.00') + ' ATR', coil ? colGood : tblBg)
+    r := f_row(r, 'Last signal', lastStr, tblBg)
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Screener + alerts   (not gated by the Show switches)
+// ═════════════════════════════════════════════════════════════════════════════
+volRatio   = ok(volAvg) ? volume / volAvg : na
+dayChgPct  = close[1] != 0 ? (close - close[1]) / close[1] * 100 : na
+dollarVolM = close * volume / 1e6
+
+alertcondition(boFired,   'TC Coil Breakout', 'TC: Coil breakout over resistance {{ticker}} @ {{close}}')
+alertcondition(fakeFired, 'TC Failed Poke',   'TC: Poked above resistance, closed back inside {{ticker}}')
+alertcondition(coil,      'TC Coil (armed)',  'TC: Tight coil under resistance {{ticker}}')
+
+plot(boFired or fakeFired ? 1 : 0, 'TC Coil Signal (any) 1/0', display = display.none, editable = false)
+plot(boFired ? 1 : 0,   'TC Coil BO 1/0',          display = display.none, editable = false)
+plot(fakeFired ? 1 : 0, 'TC Failed Poke 1/0',      display = display.none, editable = false)
+plot(coil ? coilN : 0,  'TC Coil length (bars)',   display = display.none, editable = false)
+plot(coilRngAtr,        'TC Coil range (ATR)',     display = display.none, editable = false)
+plot(distResAtr,        'TC To resistance (ATR)',  display = display.none, editable = false)
+plot(distResPct,        'TC To resistance %',      display = display.none, editable = false)
+plot(rangePos,          'TC Range position %',     display = display.none, editable = false)
+plot(volRatio,          'TC Vol / MA',             display = display.none, editable = false)
+plot(dayChgPct,         'TC Chg 1D %',             display = display.none, editable = false)
+plot(dollarVolM,        'TC $ Vol (M)',            display = display.none, editable = false)

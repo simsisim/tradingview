@@ -1,0 +1,483 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © simsisim
+//
+// s-TC Base Breakout — tight-base methods side by side, indicator + Pine Screener.
+//
+//   OLD  — Voyage card "VTG Breakout Signal: Old vs New", left column
+//          (gd_systems/tradying_voyage/HS2aXjWbIAAoVyX.jpeg) = the book's
+//          "fast version: just 4 & 9 EMA squeezing".
+//          BASE    : 4/9 EMA compression + last candle has a tight range
+//          TRIGGER : EXPANSION — EMA expansion + Day & Body Range Expansion >= 0%
+//                    + rising ATR + VTG ATR green zone (0–3 ATR over 21 EMA, 0–5 over 50 SMA)
+//   NEW  — same card, right column. The card is the UPDATED rule set; the book
+//          (Momentum Trader's Guide, older) only fills in numbers the card lacks.
+//          BASE    : 3+ day base, pullback toward a rising 21 EMA, tight
+//                    controlled closes, ATR decreasing
+//          Older-book extras (off): last 2 closes within 1%, 4/9/21 EMA within 1%,
+//                    volume contraction, >= 20% leg before the base
+//          TRIGGER : CONFIRMATION — close above the base high, strong close
+//                    (within 30% of the high), volume >= average, rising ATR
+//   Book entry filters (optional, off by default, per method): range and body
+//          > prior candle, 4 EMA ticking up, not extended (d21 < 3 ATR, d50 < 5 ATR).
+//   T&O  — the "Tight & orderly" stage of the dashboard-screener workflow
+//          "Trading Voyage (Ollie)" (python/dashboard-screener/config.py),
+//          ported 1:1 so the chart can be compared with the Python screener:
+//          RTI(50) zone 1–2 (src/focus/rti.py) AND Golden Launch Pad
+//          (src/leaders/gold_launch_pad.py). Optionally the upstream Universe +
+//          Momentum-leaders stages too. It is a STATE (no trigger of its own);
+//          the optional "T&O BO" applies the NEW trigger to the prior day's high.
+//
+// Numbers marked (book) are Ollie's; (card) come from the card's bullets;
+// (ours) are our own guesses — tune freely.
+// No request.* -> screener-safe. Daily chart.
+//
+//@version=6
+indicator('s-TC Base Breakout', 'TC Base BO', overlay = true, max_labels_count = 500, max_boxes_count = 200)
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Inputs
+// ═════════════════════════════════════════════════════════════════════════════
+gShow = 'Methods'
+showOld     = input.bool(true,  'OLD breakout',                         group = gShow)
+showNew     = input.bool(true,  'NEW breakout',                         group = gShow)
+showTnoBO   = input.bool(false, 'T&O breakout (T&O state + NEW trigger over the prior high)', group = gShow)
+showOldBase = input.bool(true,  'Mark OLD base bars (blue dot below bar)', group = gShow)
+showNewBase = input.bool(true,  'Box the NEW base (dashed live + solid on each breakout)', group = gShow)
+showTno     = input.bool(true,  'Tint T&O state bars (orange background)', group = gShow)
+
+gDisp = 'Display'
+showLabels        = input.bool(true,  'Show trigger labels',                      group = gDisp)
+labelsCurrentOnly = input.bool(false, 'Labels only on current bar',               group = gDisp)
+paintBars         = input.bool(true,  'Paint the trigger bar',                    group = gDisp)
+labelTextAuto     = input.bool(true,  'Label text auto black/white for contrast', group = gDisp)
+labelGap          = input.float(0.5,  'Label stack spacing (× ATR)', minval = 0.05, group = gDisp)
+showEmas          = input.bool(true,  'Plot 4 / 9 / 21 EMAs',                     group = gDisp)
+showGlpEmas       = input.bool(false, 'Plot 10 / 20 / 50 EMAs (Golden Launch Pad)', group = gDisp)
+
+gUnit = 'Tightness unit'
+unit = input.string('%', 'Measure closes / EMA gaps in', ['%', 'ATR'], group = gUnit, tooltip = '% = the book (closes within 1%, EMAs within 1%). ATR = the same test in ATR units, using the (× ATR) fields.')
+
+gOld = 'OLD — base + trigger'
+oFast     = input.int(4,     'Fast EMA', minval = 1, group = gOld)
+oSlow     = input.int(9,     'Slow EMA', minval = 1, group = gOld)
+oCompPct  = input.float(1.0, 'Base: 4/9 EMA gap <= (%)',     minval = 0, step = 0.1,  group = gOld, tooltip = '(book) 4 & 9 EMA squeezing — the book uses 1% for the 4/9/21 springboard.')
+oCompAtr  = input.float(0.5, 'Base: 4/9 EMA gap <= (× ATR)', minval = 0, step = 0.05, group = gOld, tooltip = '(ours) used when the unit is ATR.')
+oMinSq    = input.int(1,     'Base: min consecutive bars in 4/9 squeeze', minval = 1, group = gOld, tooltip = 'Squeeze streak ending on the base bar (the tight candle). 1 = the base bar alone is enough.')
+oTightK   = input.float(0.8, 'Base: last candle range <= (× ATR)', minval = 0, step = 0.05, group = gOld, tooltip = '(card) "last candle has a tight range" — the number is ours.')
+oNarrower = input.bool(false,'Base: last candle also narrower than the one before', group = gOld)
+oDayExp   = input.bool(true, 'Trigger: Day Range Expansion >= 0%',  group = gOld, tooltip = '(card) "range expands vs prior day". Same formula as the s-VTG ATR table: (today H−L / prior H−L − 1) × 100.')
+oBodyExp  = input.bool(true, 'Trigger: Body Range Expansion >= 0%', group = gOld, tooltip = 'Same formula as the s-VTG ATR table: (today |O−C| / prior |O−C| − 1) × 100.')
+oNotExt   = input.bool(true, 'Trigger: in the VTG ATR green zone (not extended)', group = gOld, tooltip = 'As the s-VTG ATR table: 0 <= (close − 21 EMA)/ATR <= 3 and 0 <= (close − 50 SMA)/ATR <= 5. Below the MA also fails.')
+oExt21    = input.float(3.0, 'Green zone: max ATR above the 21 EMA', minval = 0, step = 0.5, group = gOld)
+oExt50    = input.float(5.0, 'Green zone: max ATR above the 50 SMA', minval = 0, step = 0.5, group = gOld)
+oNeedHi   = input.bool(false, 'Trigger: also close above the prior high', group = gOld, tooltip = '(ours) extra direction filter. Off = card only (EMA expansion + range expansion + rising ATR).')
+
+gNew = 'NEW — base'
+nEmaLen    = input.int(21,     'Trend EMA length',                       minval = 1, group = gNew)
+nBaseMin   = input.int(3,      'Base length min (bars)',                 minval = 2, group = gNew, tooltip = '(card) 3+ day base; (book) 2–10 days.')
+nBaseMax   = input.int(10,     'Base length max (bars)',                 minval = 2, group = gNew, tooltip = 'Every length from min to max is tested; the LONGEST that qualifies is kept.')
+nNeedSpan  = input.bool(true,  'Tight, controlled closes (whole base)',  group = gNew, tooltip = '(card)')
+nSpanAtr   = input.float(1.0,  'Base close span <= (× ATR)',             minval = 0, step = 0.05, group = gNew, tooltip = '(ours) highest close − lowest close of the base.')
+nHoldAtr   = input.float(1.0,  'Closes hold the 21 EMA within (× ATR)',  minval = 0, step = 0.05, group = gNew, tooltip = '(book) invalid below the 21 EMA — OK if within 1 ATR of it and holding.')
+nNearAtr   = input.float(1.0,  'Pullback: base low within (× ATR) of the 21 EMA', minval = 0, step = 0.05, group = gNew, tooltip = '(card) "pullback toward the 21 EMA" — the number is ours.')
+nNeedEmaUp = input.bool(true,  '21 EMA rising across the base',          group = gNew, tooltip = '(card) drawn rising.')
+nNeedAtrDn = input.bool(true,  'ATR decreasing across the base',         group = gNew, tooltip = '(card)')
+
+gNewBk = 'NEW — base, older-book extras  (not on the card, off by default)'
+nNeed2Cls  = input.bool(false, 'Last 2 closes within 1%',                group = gNewBk)
+nClosePct  = input.float(1.0,  'Last 2 closes within (%)',               minval = 0, step = 0.1,  group = gNewBk, tooltip = '(book) the two days before the breakout close within 1% of each other.')
+nCloseAtr  = input.float(0.3,  'Last 2 closes within (× ATR)',           minval = 0, step = 0.05, group = gNewBk, tooltip = '(ours) used when the unit is ATR.')
+nNeedComp  = input.bool(false, '4/9/21 EMA compression',                 group = gNewBk)
+nCompPct   = input.float(1.0,  '4/9/21 EMA spread <= (%)',               minval = 0, step = 0.1,  group = gNewBk, tooltip = '(book) springboard: 4-, 9- and 21-EMA within 1% of each other.')
+nCompAtr   = input.float(0.5,  '4/9/21 EMA spread <= (× ATR)',           minval = 0, step = 0.05, group = gNewBk, tooltip = '(ours) used when the unit is ATR.')
+nNeedVolDn = input.bool(false, 'Volume contraction (base avg < 50-day avg)', group = gNewBk, tooltip = '(book) volume dries up into the breakout.')
+nNeedLeg   = input.bool(false, 'Momentum leg before the base',           group = gNewBk)
+nLegPct    = input.float(20,   'Leg: base high >= X% above the prior low', minval = 0, step = 5, group = gNewBk, tooltip = '(book) >= 20% momentum leg before the consolidation.')
+nLegLook   = input.int(63,     'Leg: low of the N bars before the base', minval = 5, group = gNewBk, tooltip = '(ours) 63 = ~3 months, same window as the 3M momentum scan.')
+
+gTrg = 'NEW — trigger  (also used by T&O BO)'
+tClearBase = input.bool(true,  'Breakout candle confirms: close above the base high (T&O: prior high)', group = gTrg, tooltip = '(card) "breakout candle confirms".')
+tTopPct    = input.float(30,   'Strong close: within X% of the high', minval = 1, maxval = 100, group = gTrg, tooltip = '(card) "strong close"; 30% is the book number.')
+tVolMult   = input.float(1.0,  'Volume >= (× average), 0 = off',   minval = 0, step = 0.1, group = gTrg, tooltip = '(card) "+ volume"; >= average is the book number.')
+tVolLen    = input.int(50,     'Average volume length',            minval = 1, group = gTrg)
+tNeedAtrUp = input.bool(true,  'Rising ATR',                       group = gTrg, tooltip = '(card)')
+
+gBook = 'Book entry filters  (optional, added on top of the card trigger)'
+bkOld      = input.bool(false, 'Apply to OLD trigger',             group = gBook)
+bkNew      = input.bool(false, 'Apply to NEW / T&O trigger',       group = gBook)
+bkRangeExp = input.bool(true,  'Range > prior candle range',       group = gBook, tooltip = '(book) OLD already has Day/Body Range Expansion + green zone in its own group.')
+bkBodyExp  = input.bool(true,  'Body > prior candle body',         group = gBook, tooltip = '(book) both body and full range.')
+bkEma4     = input.bool(true,  '4 EMA ticking up',                 group = gBook, tooltip = '(book)')
+bkNotExt   = input.bool(true,  'Not extended (Jack-in-the-Box)',   group = gBook, tooltip = '(book) d21 < 3 ATR and d50 < 5 ATR.')
+bkExt21    = input.float(3.0,  'Max ext from 21 EMA (× ATR)',      minval = 0, step = 0.5, group = gBook)
+bkExt50    = input.float(5.0,  'Max ext from 50 SMA (× ATR)',      minval = 0, step = 0.5, group = gBook)
+
+gTno = 'T&O — dashboard "Tight & orderly" stage (1:1 port)'
+rtiLen     = input.int(50,     'RTI length',                  minval = 1, group = gTno, tooltip = 'rti.py: RTI = SMA(high − low, 50) / hlc3 × 100.')
+rtiZ1      = input.float(5.0,  'RTI zone 1 below',            minval = 0, group = gTno)
+rtiZ2      = input.float(10.0, 'RTI zone 2 below',            minval = 0, group = gTno, tooltip = 'Stage requires zone 1 or 2 -> RTI < this.')
+rtiZ3      = input.float(15.0, 'RTI zone 3 below (display only)', minval = 0, group = gTno)
+glpF       = input.int(10,     'GLP EMA fast',                minval = 1, group = gTno)
+glpM       = input.int(20,     'GLP EMA mid',                 minval = 1, group = gTno)
+glpS       = input.int(50,     'GLP EMA slow',                minval = 1, group = gTno)
+glpZWin    = input.int(50,     'GLP z-score window (+1 incl.)', minval = 2, group = gTno)
+glpMaxSpr  = input.float(1.0,  'GLP max z-spread',            minval = 0, step = 0.1, group = gTno)
+glpSlopeK  = input.float(0.3,  'GLP slope lookback (× period)', minval = 0.05, step = 0.05, group = gTno)
+glpMinSlp  = input.float(0.0001,'GLP min slope (price / bar)', minval = 0, group = gTno)
+glpProxK   = input.float(2.0,  'GLP near cluster (× stdev)',  minval = 0, step = 0.1, group = gTno)
+glpProxWin = input.int(20,     'GLP stdev window',            minval = 2, group = gTno)
+tnoUp      = input.bool(false, 'Include upstream stages (Universe + Momentum leaders)', group = gTno, tooltip = 'Universe: 20d ADR% 3–60, 50d $ADV > $1M, close > 50 SMA and > 200 SMA (the 2A/2B stage filter is not ported). Momentum leaders: >30% above the 21d low OR >50% above the 63d low OR >100% above the 126d low.')
+
+gGen = 'General'
+atrLen      = input.int(14, 'ATR length', minval = 1, group = gGen)
+confirmBody = input.bool(false, 'Breakout needs the whole body above the level (else the close)', group = gGen)
+cooldown    = input.int(3, 'Min bars between signals (per method)', minval = 0, group = gGen)
+
+gTbl = 'Table'
+showTable = input.bool(true, 'Show comparison table', group = gTbl)
+tablePos  = input.string('Bottom Right', 'Table position', ['Top Left', 'Top Right', 'Bottom Left', 'Bottom Right'], group = gTbl)
+tblBg     = input.color(#cfd8dc,     'Table background', group = gTbl)
+tblHd     = input.color(#90a4ae,     'Section header',   group = gTbl)
+tblTx     = input.color(color.black, 'Table text',       group = gTbl)
+colGood   = input.color(#66bb6a, 'Pass', group = gTbl, inline = 'c')
+colWarn   = input.color(#f9a825, 'Near', group = gTbl, inline = 'c')
+colBad    = input.color(#ef5350, 'Fail', group = gTbl, inline = 'c')
+
+gCol = 'Colours  (painted bar + label background)'
+colOld  = input.color(#2962ff, 'OLD',  group = gCol)
+colNew  = input.color(#00c853, 'NEW',  group = gCol)
+colTno  = input.color(#ff9800, 'T&O',  group = gCol)
+colMult = input.color(#e040fb, 'More than one on the same bar', group = gCol)
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Common
+// ═════════════════════════════════════════════════════════════════════════════
+ok(float x) => not na(x) and x != 0
+brk(float lvl) => (confirmBody ? math.min(open, close) : close) > lvl
+
+atr    = ta.atr(atrLen)
+rng    = high - low
+body   = math.abs(close - open)
+volAvg = ta.sma(volume, tVolLen)
+ema4   = ta.ema(close, oFast)
+ema9   = ta.ema(close, oSlow)
+ema21  = ta.ema(close, nEmaLen)
+sma50  = ta.sma(close, 50)
+d21    = ok(atr) ? (close - ema21) / atr : na
+d50    = ok(atr) ? (close - sma50) / atr : na
+// a price distance passes the tightness test in the chosen unit
+tight(float d, float kPct, float kAtr) => unit == '%' ? (ok(close) and d / close * 100 <= kPct) : (ok(atr) and d <= kAtr * atr)
+inUnit(float d) => unit == '%' ? (ok(close) ? d / close * 100 : na) : (ok(atr) ? d / atr : na)
+
+// Day / Body Range Expansion + MA distance — KEEP IN SYNC with IO_vtg/visual_vtgAtr.pine
+// (dayExp / bodyExp / d21 / d50) so this trigger and the VTG ATR table agree on the bar.
+dayExp  = ok(rng[1])  ? (rng  / rng[1]  - 1) * 100 : na
+bodyExp = ok(body[1]) ? (body / body[1] - 1) * 100 : na
+dayOK   = rng  >= rng[1]                        // == dayExp  >= 0 (also defined when the prior range is 0)
+bodyOK  = body >= body[1]                       // == bodyExp >= 0 (prior doji -> passes)
+greenZone = not na(d21) and not na(d50) and d21 >= 0 and d21 <= oExt21 and d50 >= 0 and d50 <= oExt50
+
+// Book entry filters (optional; applied per method)
+bookOK = (not bkRangeExp or rng > rng[1])
+     and (not bkBodyExp  or body > body[1])
+     and (not bkEma4     or ema4 > ema4[1])
+     and (not bkNotExt   or (not na(d21) and not na(d50) and d21 < bkExt21 and d50 < bkExt50))
+
+// ═════════════════════════════════════════════════════════════════════════════
+// OLD — base + trigger
+// ═════════════════════════════════════════════════════════════════════════════
+spread   = ema4 - ema9
+oldGap   = math.abs(spread)
+oldComp  = unit == '%' ? tight(oldGap, oCompPct, 0) : tight(oldGap, 0, oCompAtr)
+var int sqBars = 0
+sqBars  := oldComp ? sqBars + 1 : 0                 // consecutive squeeze bars ending here
+oldBase  = sqBars >= oMinSq and ok(atr) and rng <= oTightK * atr and (not oNarrower or rng < rng[1])
+
+// OLD = EXPANSION: the squeeze releases (EMAs and range widen). No level, no volume.
+oldRaw = oldBase[1]
+     and spread > 0 and spread > spread[1]               // EMA expansion, upward (card)
+     and (not oDayExp  or dayOK)                         // Day Range Expansion >= 0% (card)
+     and (not oBodyExp or bodyOK)                        // Body Range Expansion >= 0% (VTG ATR)
+     and atr > atr[1]                                    // rising ATR (card)
+     and (not oNotExt  or greenZone)                     // VTG ATR green zone: 0–3 ATR / 0–5 ATR
+     and (not oNeedHi or brk(high[1]))
+     and (not bkOld   or bookOK)
+
+// ═════════════════════════════════════════════════════════════════════════════
+// NEW — base (longest qualifying base ending on this bar) + trigger
+// ═════════════════════════════════════════════════════════════════════════════
+closeDiff = math.abs(close - close[1])
+tight2    = unit == '%' ? tight(closeDiff, nClosePct, 0) : tight(closeDiff, 0, nCloseAtr)
+emaSpr    = math.max(ema4, ema9, ema21) - math.min(ema4, ema9, ema21)
+emaComp   = unit == '%' ? tight(emaSpr, nCompPct, 0) : tight(emaSpr, 0, nCompAtr)
+legLowSer = ta.lowest(low, nLegLook)
+baseMax   = math.max(nBaseMax, nBaseMin)
+
+f_base() =>
+    bool  found = false
+    int   bestN = 0
+    float bHi   = na
+    float bLo   = na
+    float bLeg  = na
+    float bVolR = na
+    float bSpan = na
+    if ok(atr) and not na(ema21) and (not nNeed2Cls or tight2) and (not nNeedComp or emaComp)
+        float hiC    = close
+        float loC    = close
+        float hiH    = high
+        float loL    = low
+        float minCls = close - ema21
+        float minLow = low - ema21
+        float sumV   = volume
+        for i = 1 to baseMax - 1
+            hiC    := math.max(hiC, close[i])
+            loC    := math.min(loC, close[i])
+            hiH    := math.max(hiH, high[i])
+            loL    := math.min(loL, low[i])
+            minCls := math.min(minCls, close[i] - ema21[i])
+            minLow := math.min(minLow, low[i] - ema21[i])
+            sumV   += volume[i]
+            n = i + 1
+            if n >= nBaseMin
+                legPct = ok(legLowSer[n]) ? (hiH / legLowSer[n] - 1) * 100 : na
+                volR   = ok(volAvg[n]) ? (sumV / n) / volAvg[n] : na
+                pass = minCls >= -nHoldAtr * atr                               // holds the 21 EMA (book)
+                     and minLow <= nNearAtr * atr                               // pullback toward it (card)
+                     and (not nNeedEmaUp or ema21 > ema21[n])                   // 21 EMA rising (card)
+                     and (not nNeedAtrDn or atr < atr[n])                       // ATR decreasing (card)
+                     and (not nNeedVolDn or (not na(volR) and volR < 1))        // volume contraction (book)
+                     and (not nNeedLeg   or (not na(legPct) and legPct >= nLegPct)) // >= 20% leg (book)
+                     and (not nNeedSpan  or hiC - loC <= nSpanAtr * atr)             // tight closes (card)
+                if pass
+                    found := true
+                    bestN := n
+                    bHi   := hiH
+                    bLo   := loL
+                    bLeg  := legPct
+                    bVolR := volR
+                    bSpan := (hiC - loC) / atr
+    [found, bestN, bHi, bLo, bLeg, bVolR, bSpan]
+
+[newBase, baseN, baseHi, baseLo, baseLeg, baseVolR, baseSpan] = f_base()
+
+// NEW = CONFIRMATION: a candle closes through a qualified level, strong close + volume.
+f_trig(float lvl) =>
+    (not tClearBase or brk(lvl))                                          // breakout candle confirms (card)
+     and rng > 0 and (high - close) / rng <= tTopPct / 100                // strong close (card; 30% book)
+     and (tVolMult == 0 or (ok(volAvg) and volume >= tVolMult * volAvg))  // + volume (card)
+     and (not tNeedAtrUp or atr > atr[1])                                 // rising ATR (card)
+     and (not bkNew or bookOK)
+
+newRaw = newBase[1] and f_trig(baseHi[1])
+
+// ═════════════════════════════════════════════════════════════════════════════
+// T&O — dashboard "Tight & orderly" stage, 1:1
+// ═════════════════════════════════════════════════════════════════════════════
+// RTI (rti.py): SMA(range, 50) / typical price × 100 ; zones 1 < 5, 2 < 10, 3 < 15
+rti     = ok(hlc3) ? ta.sma(rng, rtiLen) / hlc3 * 100 : na
+rtiZone = na(rti) ? 0 : rti < rtiZ1 ? 1 : rti < rtiZ2 ? 2 : rti < rtiZ3 ? 3 : 0
+rtiOK   = rtiZone == 1 or rtiZone == 2
+
+// Golden Launch Pad (gold_launch_pad.py), EMAs 10/20/50
+eF = ta.ema(close, glpF)
+eM = ta.ema(close, glpM)
+eS = ta.ema(close, glpS)
+zWin = glpZWin + 1                                          // inclusive trailing window
+f_z(float e) =>
+    sd = ta.stdev(e, zWin)                                  // population stdev (ddof=0), as the source
+    ok(sd) ? (e - ta.sma(e, zWin)) / sd : na
+zF = f_z(eF)
+zM = f_z(eM)
+zS = f_z(eS)
+glpSpread = na(zF) or na(zM) or na(zS) ? na : math.max(zF, zM, zS) - math.min(zF, zM, zS)
+// OLS slope over int(period × 0.3) + 1 bars = linreg(offset 0) − linreg(offset 1)
+f_slope(float e, int p) =>
+    n = math.max(1, int(p * glpSlopeK)) + 1
+    ta.linreg(e, n, 0) - ta.linreg(e, n, 1)
+slF = f_slope(eF, glpF)
+slM = f_slope(eM, glpM)
+slS = f_slope(eS, glpS)
+cAvg = (eF + eM + eS) / 3
+proxSd = ta.stdev(close, glpProxWin, false)                 // sample stdev (ddof=1), as pandas
+
+glp1 = not na(glpSpread) and glpSpread <= glpMaxSpr         // tightly grouped
+glp2 = eF > eM and eM > eS                                  // bullishly stacked
+glp3 = slF > glpMinSlp and slM > glpMinSlp and slS > glpMinSlp   // positive slopes
+glp4 = close > eF                                           // above fastest EMA
+glp5 = not na(proxSd) and math.abs(close - cAvg) <= glpProxK * proxSd   // near the cluster
+glpOK = glp1 and glp2 and glp3 and glp4 and glp5
+glpScore = na(glpSpread) ? na : math.max(0, math.min(1, 1 - glpSpread / glpMaxSpr))
+
+// optional upstream stages
+adr20  = ok(close) ? ta.sma(rng, 20) / close * 100 : na
+adv50  = ta.sma(close * volume, 50)
+univOK = not na(adr20) and adr20 >= 3 and adr20 <= 60 and adv50 > 1e6 and close > sma50 and close > ta.sma(close, 200)
+pAbove(int n) =>
+    lo = ta.lowest(low, n)
+    ok(lo) ? (close / lo - 1) * 100 : na
+up21  = pAbove(21)
+up63  = pAbove(63)
+up126 = pAbove(126)
+momOK = nz(up21) > 30 or nz(up63) > 50 or nz(up126) > 100
+upOK  = univOK and momOK
+
+tno    = rtiOK and glpOK and (not tnoUp or upOK)
+tnoRaw = tno[1] and f_trig(high[1])
+
+// ── Per-method cooldown (one call site each -> own persistent counter) ─────
+f_gate(bool raw) =>
+    var int since = na
+    ready = na(since) or since >= cooldown
+    fired = raw and ready
+    since := fired ? 0 : na(since) ? na : since + 1
+    fired
+
+oldFired = f_gate(oldRaw)       // ungated by Show switches (screener needs them)
+newFired = f_gate(newRaw)
+tnoFired = f_gate(tnoRaw)
+oldSig   = showOld   and oldFired
+newSig   = showNew   and newFired
+tnoSig   = showTnoBO and tnoFired
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Visuals
+// ═════════════════════════════════════════════════════════════════════════════
+plot(showEmas ? ema4  : na, '4 EMA',  color = color.new(color.blue, 0), linewidth = 1)
+plot(showEmas ? ema9  : na, '9 EMA',  color = color.new(color.red, 0),  linewidth = 1)
+plot(showEmas ? ema21 : na, '21 EMA', color = color.new(#2e7d32, 0),    linewidth = 2)
+plot(showGlpEmas ? eF : na, 'GLP 10 EMA', color = color.new(#ffb74d, 0), linewidth = 1)
+plot(showGlpEmas ? eM : na, 'GLP 20 EMA', color = color.new(#fb8c00, 0), linewidth = 1)
+plot(showGlpEmas ? eS : na, 'GLP 50 EMA', color = color.new(#e65100, 0), linewidth = 1)
+plotshape(showOldBase and oldBase, 'OLD base', shape.circle, location.belowbar, color.new(colOld, 0), size = size.tiny)
+bgcolor(showTno and tno ? color.new(colTno, 85) : na, title = 'T&O state')
+
+nSig   = (oldSig ? 1 : 0) + (newSig ? 1 : 0) + (tnoSig ? 1 : 0)
+sigCol = nSig > 1 ? colMult : newSig ? colNew : oldSig ? colOld : tnoSig ? colTno : na
+barcolor(paintBars ? sigCol : na, title = 'Trigger bar')
+
+labelOK = showLabels and (not labelsCurrentOnly or barstate.islast)
+gapY    = nz(atr, close * 0.02) * labelGap
+
+f_txt(color bg) =>
+    lum = 0.299 * color.r(bg) + 0.587 * color.g(bg) + 0.114 * color.b(bg)
+    labelTextAuto ? (lum > 150 ? color.black : color.white) : color.white
+
+f_tag(int slot, bool cond, string txt, color c) =>
+    s = slot
+    if cond and labelOK
+        label.new(bar_index, high + gapY + slot * gapY, txt, style = label.style_label_down, color = color.new(c, 0), textcolor = f_txt(c), size = size.small)
+        s := slot + 1
+    s
+
+slot = 0
+slot := f_tag(slot, newSig, 'TC New BO', colNew)
+slot := f_tag(slot, oldSig, 'TC Old BO', colOld)
+slot := f_tag(slot, tnoSig, 'TC T&O BO', colTno)
+
+if showNewBase and newSig
+    box.new(bar_index - baseN[1], baseHi[1], bar_index - 1, baseLo[1], border_color = color.new(colNew, 0), bgcolor = color.new(colNew, 85))
+
+var box liveBox = na
+if barstate.islast
+    box.delete(liveBox)
+    liveBox := na
+    if showNewBase and newBase
+        liveBox := box.new(bar_index - baseN + 1, baseHi, bar_index, baseLo, border_color = color.new(colNew, 0), border_style = line.style_dashed, bgcolor = color.new(colNew, 90))
+
+// ── Comparison table ────────────────────────────────────────────────────────
+posConst = switch tablePos
+    'Top Left'     => position.top_left
+    'Top Right'    => position.top_right
+    'Bottom Left'  => position.bottom_left
+    => position.bottom_right
+
+u        = unit == '%' ? '%' : ' ATR'
+fmtU(float d) => na(d) ? '—' : str.tostring(inUnit(d), '0.00') + u
+pf(bool b) => b ? colGood : colBad
+ck(bool b) => b ? '✓' : '✗'
+
+atrRef   = newBase ? atr[baseN] : atr[nBaseMin]
+atrTrend = ok(atrRef) ? atr / atrRef : na
+
+var string lastSig = na
+var int    lastBar = na
+if oldFired or newFired or tnoFired
+    lastSig := newFired and oldFired ? 'New + Old' : newFired ? 'New' : oldFired ? 'Old' : 'T&O'
+    lastBar := bar_index
+lastStr = na(lastSig) ? '—' : lastSig + ' (' + str.tostring(bar_index - lastBar) + 'b ago)'
+
+var table t = table.new(posConst, 2, 20, frame_color = color.new(color.black, 55), frame_width = 1, border_color = color.new(color.black, 80), border_width = 1)
+
+f_row(int r, string k, string v, color bg) =>
+    table.cell(t, 0, r, k + '  ', text_color = tblTx, text_size = size.small, text_halign = text.align_left, bgcolor = bg)
+    table.cell(t, 1, r, v,        text_color = tblTx, text_size = size.small, text_halign = text.align_left, bgcolor = bg)
+    r + 1
+
+if barstate.islast and showTable
+    table.clear(t, 0, 0, 1, 19)
+    int r = 0
+    r := f_row(r, 'BASE NOW', 'Old ' + ck(oldBase) + '   New ' + ck(newBase) + '   T&O ' + ck(tno), tblHd)
+    // OLD
+    r := f_row(r, 'OLD 4/9 gap', fmtU(oldGap) + '  (' + str.tostring(sqBars) + 'b squeeze)', pf(oldComp and sqBars >= oMinSq))
+    r := f_row(r, 'OLD candle range', ok(atr) ? str.tostring(rng / atr, '0.00') + ' ATR' : '—', pf(ok(atr) and rng <= oTightK * atr))
+    r := f_row(r, 'Day range exp', na(dayExp) ? '—' : str.tostring(dayExp, '0') + '%', pf(dayOK))
+    r := f_row(r, 'Body range exp', na(bodyExp) ? '—' : str.tostring(bodyExp, '0') + '%', pf(bodyOK))
+    // NEW
+    r := f_row(r, 'NEW base', newBase ? 'YES  ' + str.tostring(baseN) + ' bars  pivot ' + str.tostring(baseHi, format.mintick) : '—', newBase ? colGood : tblBg)
+    r := f_row(r, 'NEW base close span', na(baseSpan) ? '—' : str.tostring(baseSpan, '0.00') + ' ATR', newBase ? colGood : tblBg)
+    r := f_row(r, 'NEW last 2 closes', fmtU(closeDiff), nNeed2Cls ? pf(tight2) : tblBg)
+    r := f_row(r, 'NEW 4/9/21 spread', fmtU(emaSpr), nNeedComp ? pf(emaComp) : tblBg)
+    r := f_row(r, 'NEW ATR now / start', na(atrTrend) ? '—' : str.tostring(atrTrend, '0.00') + (atrTrend < 1 ? ' ↓' : ' ↑'), na(atrTrend) ? tblBg : pf(atrTrend < 1))
+    r := f_row(r, 'NEW base vol / avg', na(baseVolR) ? '—' : str.tostring(baseVolR, '0.00'), newBase ? colGood : tblBg)
+    r := f_row(r, 'NEW leg before base', na(baseLeg) ? '—' : str.tostring(baseLeg, '0') + '%', newBase ? colGood : tblBg)
+    r := f_row(r, 'Ext 21 / 50', (na(d21) ? '—' : str.tostring(d21, '0.0')) + ' / ' + (na(d50) ? '—' : str.tostring(d50, '0.0')) + ' ATR', pf(greenZone))
+    // T&O
+    r := f_row(r, 'T&O RTI(' + str.tostring(rtiLen) + ')', na(rti) ? '—' : str.tostring(rti, '0.00') + '  zone ' + (rtiZone == 0 ? '—' : str.tostring(rtiZone)), pf(rtiOK))
+    r := f_row(r, 'T&O GLP z-spread', na(glpSpread) ? '—' : str.tostring(glpSpread, '0.00') + '  score ' + str.tostring(glpScore, '0.00'), pf(glp1))
+    r := f_row(r, 'T&O GLP checks', 'grp' + ck(glp1) + ' stk' + ck(glp2) + ' slp' + ck(glp3) + ' >10' + ck(glp4) + ' near' + ck(glp5), pf(glpOK))
+    if tnoUp
+        r := f_row(r, 'T&O upstream', 'univ ' + ck(univOK) + '   mom ' + ck(momOK), pf(upOK))
+    r := f_row(r, 'Last signal', lastStr, tblBg)
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Screener + alerts   (not gated by the Show switches)
+// ═════════════════════════════════════════════════════════════════════════════
+volRatio   = ok(volAvg) ? volume / volAvg : na
+dayChgPct  = close[1] != 0 ? (close - close[1]) / close[1] * 100 : na
+dollarVolM = close * volume / 1e6
+pivotPct   = newBase and close != 0 ? (baseHi - close) / close * 100 : na
+
+alertcondition(newFired, 'TC New Breakout',        'TC: New base breakout {{ticker}} @ {{close}}')
+alertcondition(oldFired, 'TC Old Breakout',        'TC: Old compression breakout {{ticker}} @ {{close}}')
+alertcondition(tnoFired, 'TC T&O Breakout',        'TC: T&O breakout {{ticker}} @ {{close}}')
+alertcondition(newBase,  'TC New Base',            'TC: New qualified base {{ticker}}')
+alertcondition(oldBase,  'TC Old Base',            'TC: Old 4/9 compression base {{ticker}}')
+alertcondition(tno,      'TC T&O State',           'TC: Tight & orderly {{ticker}}')
+alertcondition(glpOK,    'TC Golden Launch Pad',   'TC: Golden Launch Pad {{ticker}}')
+alertcondition(rtiOK,    'TC RTI zone 1-2',        'TC: RTI zone 1-2 {{ticker}}')
+
+plot(oldFired or newFired or tnoFired ? 1 : 0, 'TC Signal (any) 1/0', display = display.none, editable = false)
+plot(newFired ? 1 : 0,        'TC New BO 1/0',            display = display.none, editable = false)
+plot(oldFired ? 1 : 0,        'TC Old BO 1/0',            display = display.none, editable = false)
+plot(tnoFired ? 1 : 0,        'TC T&O BO 1/0',            display = display.none, editable = false)
+plot(newBase ? baseN : 0,     'TC New base length',       display = display.none, editable = false)
+plot(pivotPct,                'TC To pivot %',            display = display.none, editable = false)
+plot(inUnit(closeDiff),       'TC Last 2 closes (unit)',  display = display.none, editable = false)
+plot(inUnit(emaSpr),          'TC 4/9/21 spread (unit)',  display = display.none, editable = false)
+plot(sqBars,                  'TC 4/9 squeeze bars',      display = display.none, editable = false)
+plot(inUnit(oldGap),          'TC 4/9 gap (unit)',        display = display.none, editable = false)
+plot(atrTrend,                'TC ATR now / base start',  display = display.none, editable = false)
+plot(baseSpan,                'TC Base close span (ATR)', display = display.none, editable = false)
+plot(baseVolR,                'TC Base vol / avg',        display = display.none, editable = false)
+plot(baseLeg,                 'TC Leg before base %',     display = display.none, editable = false)
+plot(rti,                     'TC RTI',                   display = display.none, editable = false)
+plot(rtiZone,                 'TC RTI zone',              display = display.none, editable = false)
+plot(glpSpread,               'TC GLP z-spread',          display = display.none, editable = false)
+plot(glpScore,                'TC GLP score',             display = display.none, editable = false)
+plot(dayExp,                  'TC Day range exp %',       display = display.none, editable = false)
+plot(bodyExp,                 'TC Body range exp %',      display = display.none, editable = false)
+plot(d21,                     'TC Ext 21 EMA (ATR)',      display = display.none, editable = false)
+plot(d50,                     'TC Ext 50 SMA (ATR)',      display = display.none, editable = false)
+plot(volRatio,                'TC Vol / MA',              display = display.none, editable = false)
+plot(dayChgPct,               'TC Chg 1D %',              display = display.none, editable = false)
+plot(dollarVolM,              'TC $ Vol (M)',             display = display.none, editable = false)
