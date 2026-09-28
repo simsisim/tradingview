@@ -250,6 +250,7 @@ Filters (True/False, same pattern as s-VTG Combo). Pick one in the Pine Screener
 | `TC Old (Squeeze Expansion) Triggered` | the OLD expansion bar fired |
 | `TC New (Base Breakout) Triggered` | it closed above the NEW base high |
 | `TC T&O Breakout Triggered` | the T&O breakout fired |
+| **`TC Tight Setup (any) Qualified`** | **any of the ticked setups is present now** (default: Old base, New base, T&O, Golden Launch Pad; RTI 1-2 off). Tick/untick them in the settings group *Tight Setup (any)*. Made for pre / post market runs: the last daily bar is the completed session, so it lists what is tight right now, no breakout needed |
 | `TC Old Base Qualified` | the 4/9 EMA squeeze is present now |
 | `TC New Base Qualified` | a NEW base has formed and hasn't broken out yet |
 | `TC T&O State Qualified` | the stock is in the "Tight & orderly" state |
@@ -259,6 +260,7 @@ Filters (True/False, same pattern as s-VTG Combo). Pick one in the Pine Screener
 After any edit to the script: remove it from the screener, add it back, then press **Scan** (the screener caches the compiled script; columns show `—` until you scan).
 
 Numeric (addable via Manage columns; `> 0` on a 1/0 column = the same as the True filter): `TC Signal (any) 1/0`, `TC New BO 1/0`, `TC Old BO 1/0`, `TC T&O BO 1/0`,
+`TC Tight Setup (any) 1/0`, `TC Tight Setup count` (how many ticked setups are present, 0–5; sort descending = tightest first),
 `TC Old base 1/0`, `TC New base 1/0`, `TC T&O state 1/0`, `TC GLP 1/0`,
 `TC New base length`, `TC To pivot %`, `TC Last 2 closes (unit)`, `TC 4/9/21 spread (unit)`,
 `TC 4/9 squeeze bars`, `TC 4/9 gap (unit)`, `TC ATR now / base start`, `TC Base close span (ATR)`, `TC Base vol / avg`, `TC Leg before base %`,

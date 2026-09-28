@@ -128,6 +128,13 @@ glpProxK   = input.float(2.0,  'GLP near cluster (× stdev)',  minval = 0, step 
 glpProxWin = input.int(20,     'GLP stdev window',            minval = 2, group = gTno)
 tnoUp      = input.bool(false, 'Include upstream stages (Universe + Momentum leaders)', group = gTno, tooltip = 'Universe: 20d ADR% 3–60, 50d $ADV > $1M, close > 50 SMA and > 200 SMA (the 2A/2B stage filter is not ported). Momentum leaders: >30% above the 21d low OR >50% above the 63d low OR >100% above the 126d low.')
 
+gAny = 'Tight Setup (any) — one screener filter for pre / post market'
+aOld = input.bool(true,  'Count OLD base (4/9 squeeze)',   group = gAny, tooltip = 'Ticked setups are OR-ed into the "TC Tight Setup (any) Qualified" filter and counted in "TC Tight Setup count".')
+aNew = input.bool(true,  'Count NEW base',                 group = gAny)
+aTno = input.bool(true,  'Count T&O state',                group = gAny)
+aGlp = input.bool(true,  'Count Golden Launch Pad',        group = gAny)
+aRti = input.bool(false, 'Count RTI zone 1-2',             group = gAny, tooltip = 'Off by default: on its own RTI zone 1-2 is broad (many quiet stocks pass).')
+
 gGen = 'General'
 atrLen      = input.int(14, 'ATR length', minval = 1, group = gGen)
 confirmBody = input.bool(false, 'Breakout needs the whole body above the level (else the close)', group = gGen)
@@ -322,6 +329,12 @@ momOK = nz(up21) > 30 or nz(up63) > 50 or nz(up126) > 100
 upOK  = univOK and momOK
 
 tno    = rtiOK and glpOK and (not tnoUp or upOK)
+
+// Tight Setup (any): the ticked setups present on the last bar. For pre / post
+// market runs the last daily bar is the completed session, so this is a
+// "what's tight right now" list, independent of any breakout trigger.
+tightCnt = (aOld and oldBase ? 1 : 0) + (aNew and newBase ? 1 : 0) + (aTno and tno ? 1 : 0) + (aGlp and glpOK ? 1 : 0) + (aRti and rtiOK ? 1 : 0)
+tightAny = tightCnt > 0
 tnoRaw = tno[1] and f_trig(high[1])
 
 // ── Per-method cooldown (one call site each -> own persistent counter) ─────
@@ -406,7 +419,7 @@ if oldFired or newFired or tnoFired
     lastBar := bar_index
 lastStr = na(lastSig) ? '—' : lastSig + ' (' + str.tostring(bar_index - lastBar) + 'b ago)'
 
-var table t = table.new(posConst, 2, 20, frame_color = color.new(color.black, 55), frame_width = 1, border_color = color.new(color.black, 80), border_width = 1)
+var table t = table.new(posConst, 2, 24, frame_color = color.new(color.black, 55), frame_width = 1, border_color = color.new(color.black, 80), border_width = 1)
 
 f_row(int r, string k, string v, color bg) =>
     table.cell(t, 0, r, k + '  ', text_color = tblTx, text_size = size.small, text_halign = text.align_left, bgcolor = bg)
@@ -417,6 +430,7 @@ if barstate.islast and showTable
     table.clear(t, 0, 0, 1, 19)
     int r = 0
     r := f_row(r, 'BASE NOW', 'Old ' + ck(oldBase) + '   New ' + ck(newBase) + '   T&O ' + ck(tno), tblHd)
+    r := f_row(r, 'TIGHT SETUP', tightAny ? 'YES  (' + str.tostring(tightCnt) + ' of the ticked)' : 'no', pf(tightAny))
     // OLD
     r := f_row(r, 'OLD 4/9 gap', fmtU(oldGap) + '  (' + str.tostring(sqBars) + 'b squeeze)', pf(oldComp and sqBars >= oMinSq))
     r := f_row(r, 'OLD candle range', ok(atr) ? str.tostring(rng / atr, '0.00') + ' ATR' : '—', pf(ok(atr) and rng <= oTightK * atr))
@@ -460,6 +474,7 @@ alertcondition(tnoFired, 'TC T&O Breakout Triggered',         'TC: T&O breakout 
 alertcondition(oldBase,  'TC Old Base Qualified',             'TC: Old 4/9 compression base {{ticker}}')
 alertcondition(newBase,  'TC New Base Qualified',             'TC: New qualified base {{ticker}}')
 alertcondition(tno,      'TC T&O State Qualified',            'TC: Tight & orderly {{ticker}}')
+alertcondition(tightAny, 'TC Tight Setup (any) Qualified',  'TC: tight setup {{ticker}}')
 alertcondition(glpOK,    'TC Golden Launch Pad Qualified',    'TC: Golden Launch Pad {{ticker}}')
 alertcondition(rtiOK,    'TC RTI zone 1-2 Qualified',         'TC: RTI zone 1-2 {{ticker}}')
 
@@ -469,6 +484,8 @@ plot(anyFired ? 1 : 0,        'TC Signal (any) 1/0', display = display.none, edi
 plot(newFired ? 1 : 0,        'TC New BO 1/0',            display = display.none, editable = false)
 plot(oldFired ? 1 : 0,        'TC Old BO 1/0',            display = display.none, editable = false)
 plot(tnoFired ? 1 : 0,        'TC T&O BO 1/0',            display = display.none, editable = false)
+plot(tightAny ? 1 : 0,        'TC Tight Setup (any) 1/0', display = display.none, editable = false)
+plot(tightCnt,                'TC Tight Setup count',     display = display.none, editable = false)
 plot(oldBase ? 1 : 0,         'TC Old base 1/0',          display = display.none, editable = false)
 plot(newBase ? 1 : 0,         'TC New base 1/0',          display = display.none, editable = false)
 plot(tno ? 1 : 0,             'TC T&O state 1/0',         display = display.none, editable = false)
