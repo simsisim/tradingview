@@ -1,0 +1,306 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © simsisim
+//
+// s-VTG ATR v2 — EXPERIMENTAL. Fork of visual_vtgAtr.pine (kept untouched) that
+// adds four extra, independently-toggleable "consolidation" measures on top of
+// the original table, so they can be eyeballed on real charts before any of
+// them gets written into consolidation.md as validated. Nothing from the
+// original file was removed or changed — every new block is additive and
+// off by default.
+//
+// Original file:
+//   s-VTG ATR — extension / risk-before-entry table. Companion to s-VTG Combo.
+//   Re-implementation of the Voyage Trading Group "VTG ATR" concept (Ollie_AllCaps,
+//   invite-only) on top of the open "ALEX - ATR Extensions + ADR + Table" feature
+//   set (Alex_PrimeTrading).
+//
+// New in v2 (all default OFF, all in the same table, "Consolidation (experimental)"
+// input groups):
+//   1. ATR Contraction Ratio — ATR(N) now vs ATR(N) M bars ago. Multi-bar version
+//      of the existing single-bar Day/Body Range Expansion rows. See
+//      journal/Lessons/consolidation.md, mechanism 3.
+//   2. MA Spread (Launchpad) — spread between 2 (or 3) MAs, in ATR units.
+//      Defaults to Oliver Kell's Wedge Pop pair (10/20 EMA). See
+//      consolidation.md, mechanism 2.
+//   3. BB Width Squeeze — Bollinger Band width vs its own N-bar low.
+//   4. RTI (Range Tightening Indicator) — re-implementation of the public
+//      "Range Tightening Indicator (RTI)+" script, © Ollie_AllCaps — who is
+//      Oliver Wiedmaier (author of *Momentum Trader's Guide*, source of the
+//      EP: Delayed Entry / Continuation Breakout setups) under his TradingView
+//      handle. Same author as the invite-only VTG ATR this whole file
+//      re-implements, by design, not coincidence.
+//      Compressed from its native oscillator-pane form into one table row,
+//      since this script is overlay=true (a Pine indicator can't mix an
+//      overlay table with a separate oscillator pane in one script). The
+//      original's "2+ consecutive bars below 20" orange-dot trigger is NOT
+//      ported — it needs a persistent per-bar counter, which is fragile to
+//      push through request.security() the way the rest of this table's
+//      values are; only the (stateless) expansion trigger is kept. Add the
+//      counter later if the simplification turns out to matter.
+//
+//@version=6
+indicator('s-VTG ATR v2 (consolidation experiments)', 'VTG ATR v2', overlay = true, max_lines_count = 20)
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Inputs — unchanged from v1
+// ═════════════════════════════════════════════════════════════════════════════
+gR = 'Table rows'
+showAtrPct   = input.bool(false, 'ATR %',                     group = gR)
+showAdrPct   = input.bool(false, 'ADR %',                     group = gR)
+showAnchLow  = input.bool(true,  'Low  (ATR from day Low)',   group = gR)
+showAnchOpen = input.bool(false, 'Open (ATR from day Open)',  group = gR)
+showLodDist  = input.bool(false, 'LoD distance %',            group = gR)
+showLodPrice = input.bool(false, 'LoD price',                 group = gR)
+showDist21   = input.bool(true,  '21 EMA (ATR from 21 MA)',   group = gR)
+showDist50   = input.bool(true,  '50 SMA (ATR from 50 MA)',   group = gR)
+show21Price  = input.bool(false, '21 MA price',               group = gR)
+show50Price  = input.bool(false, '50 MA price',               group = gR)
+showDayExp   = input.bool(true,  'Day Range Expansion',       group = gR)
+showBodyExp  = input.bool(true,  'Body Range Expansion',      group = gR)
+showExtTgts  = input.bool(false, 'ATR extension targets',     group = gR)
+
+// New v2 row toggles — same group, so they sit in one list in the Inputs dialog
+showContraction = input.bool(false, 'NEW: ATR Contraction Ratio (multi-bar)', group = gR)
+showMaSpread    = input.bool(false, 'NEW: MA Spread (Launchpad)',             group = gR)
+showBBWidth     = input.bool(false, 'NEW: BB Width Squeeze',                  group = gR)
+showRti         = input.bool(false, 'NEW: RTI (Range Tightening)',           group = gR)
+
+gM = 'Moving averages & ATR'
+ma21Type = input.string('EMA', '21 MA type', ['EMA', 'SMA'], group = gM)
+ma50Type = input.string('SMA', '50 MA type', ['EMA', 'SMA'], group = gM)
+p21      = input.int(21, '21 MA period', minval = 1, group = gM)
+p50      = input.int(50, '50 MA period', minval = 1, group = gM)
+atrLen   = input.int(14, 'ATR length',   minval = 1, group = gM)
+adrLen   = input.int(20, 'ADR length',   minval = 1, group = gM)
+useDaily = input.bool(true, 'Use Daily values even on intraday charts', group = gM)
+
+gC = 'Row colour  (text stays black; each row shows green = OK or red = caution)'
+odT21 = input.float(3.0, '21 MA — red when more than this many ATR above (overextended)', minval = 0, group = gC)
+odT50 = input.float(5.0, '50 MA — red when more than this many ATR above (overextended)', minval = 0, group = gC)
+
+gT = 'ATR extension targets'
+mult21     = input.float(2.0, '21 MA target — ATR x', minval = 0, group = gT)
+mult50     = input.float(4.0, '50 MA target — ATR x', minval = 0, group = gT)
+showLine21 = input.bool(false, 'Plot 21 target line', group = gT)
+showLine50 = input.bool(false, 'Plot 50 target line', group = gT)
+lineCol21  = input.color(color.orange, '21 line colour', group = gT, inline = 'l')
+lineCol50  = input.color(color.red,    '50 line colour', group = gT, inline = 'l')
+
+gB = 'Bar markers'
+showChar21 = input.bool(false, 'Mark bars extended from 21 MA', group = gB)
+char21     = input.string('●', '21 symbol',   group = gB, inline = '21')
+charCol21  = input.color(color.new(#cfcece, 0), '', group = gB, inline = '21')
+charThr21  = input.float(2.0, '21 threshold (ATR)', minval = 0, group = gB)
+showChar50 = input.bool(false, 'Mark bars extended from 50 MA', group = gB)
+char50     = input.string('—', '50 symbol',   group = gB, inline = '50')
+charCol50  = input.color(color.new(#fb00ff, 0), '', group = gB, inline = '50')
+charThr50  = input.float(2.0, '50 threshold (ATR)', minval = 0, group = gB)
+
+gS = 'Table style'
+tPos  = input.string('Bottom Left', 'Position', ['Top Left', 'Top Right', 'Middle Right', 'Bottom Left', 'Bottom Right'], group = gS)
+tFont = input.string('Small', 'Font size', ['Tiny', 'Small', 'Normal', 'Large'], group = gS)
+tBg   = input.color(#8ccf8c, 'Table background (neutral rows)', group = gS)
+tTxt  = input.color(color.black, 'Table text',   group = gS)
+colG  = input.color(color.new(#66bb6a, 0), 'Row OK (green)',      group = gS, inline = 'c')
+colR  = input.color(color.new(#ef5350, 0), 'Row caution (red)',   group = gS, inline = 'c')
+
+// ── New v2 input groups ────────────────────────────────────────────────────
+gK = 'Consolidation (experimental) — ATR Contraction Ratio'
+contractN   = input.int(10,  'ATR length (N)',            minval = 1, group = gK)
+contractM   = input.int(20,  'Lookback offset (M bars)',  minval = 1, group = gK)
+contractThr = input.float(1.0, 'Green when ratio ≤ this', minval = 0, group = gK)
+
+gL = 'Consolidation (experimental) — MA Spread / Launchpad'
+maA_len     = input.int(10, 'MA A period', minval = 1, group = gL)
+maA_type    = input.string('EMA', 'MA A type', ['EMA', 'SMA'], group = gL)
+maB_len     = input.int(20, 'MA B period', minval = 1, group = gL)
+maB_type    = input.string('EMA', 'MA B type', ['EMA', 'SMA'], group = gL)
+useMaC      = input.bool(false, 'Include a 3rd MA (e.g. the book\'s 4/9/21 set)', group = gL)
+maC_len     = input.int(21, 'MA C period', minval = 1, group = gL)
+maC_type    = input.string('EMA', 'MA C type', ['EMA', 'SMA'], group = gL)
+maSpreadThr = input.float(0.5, 'Green when spread ≤ this many ATR', minval = 0, group = gL)
+// Defaults (10/20 EMA) reproduce Oliver Kell's Wedge Pop pair, per the
+// third-party rulebook reconstruction (Rule 09/10) — see consolidation.md.
+// Toggle useMaC + set maC_len=4, maA_len=9... to reproduce the book's 4/9/21
+// set instead (Momentum Trader's Guide's "Moving Average Compression").
+
+gBB = 'Consolidation (experimental) — BB Width Squeeze'
+bbLen       = input.int(20, 'BB length',   minval = 1, group = gBB)
+bbMult      = input.float(2.0, 'BB mult (std dev)', minval = 0, group = gBB)
+bbSqueezeLen = input.int(120, 'Lowest-of-N lookback for the squeeze flag', minval = 1, group = gBB)
+bbSqueezeTol = input.float(1.05, 'Squeeze tolerance (width ≤ N-bar-low × this)', minval = 1, group = gBB)
+
+gRTI = 'Consolidation (experimental) — RTI  (Range Tightening Indicator, © Ollie_AllCaps)'
+rtiLookbackOpt = input.string('5', 'RTI lookback', ['5', '15', 'Custom Lookback'], group = gRTI)
+rtiCustomLen   = input.int(50, 'RTI custom lookback', minval = 1, group = gRTI)
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Core calculations — unchanged v1 block
+// Everything is computed in the main scope, then pulled from the 1D timeframe in
+// ONE request.security call (or the chart TF if "Use Daily" is off).  Computing
+// the MAs here — instead of calling a helper function inside request.security —
+// is what makes every toggled row populate reliably.
+// ═════════════════════════════════════════════════════════════════════════════
+tf   = useDaily ? '1D' : timeframe.period
+ma21 = ma21Type == 'EMA' ? ta.ema(close, p21) : ta.sma(close, p21)
+ma50 = ma50Type == 'EMA' ? ta.ema(close, p50) : ta.sma(close, p50)
+atr  = ta.atr(atrLen)
+adr  = ta.sma(high - low, adrLen)
+rng  = high - low
+bdy  = math.abs(close - open)
+
+// ── New v2 series — computed pre-security, same trick as the v1 block above,
+//    so they resolve on the Daily timeframe even on an intraday chart.
+atrN      = ta.atr(contractN)
+atrNback  = atrN[contractM]
+
+maA = maA_type == 'EMA' ? ta.ema(close, maA_len) : ta.sma(close, maA_len)
+maB = maB_type == 'EMA' ? ta.ema(close, maB_len) : ta.sma(close, maB_len)
+maC = maC_type == 'EMA' ? ta.ema(close, maC_len) : ta.sma(close, maC_len)
+
+bbBasis  = ta.sma(close, bbLen)
+bbDev    = bbMult * ta.stdev(close, bbLen)
+bbUpper  = bbBasis + bbDev
+bbLower  = bbBasis - bbDev
+bbWidth  = bbBasis != 0 ? (bbUpper - bbLower) / bbBasis * 100 : na
+bbWidthLowN = ta.lowest(bbWidth, bbSqueezeLen)
+
+rtiLen  = rtiLookbackOpt == '5' ? 5 : rtiLookbackOpt == '15' ? 15 : rtiCustomLen
+rtiVol  = high - low
+rtiMaxV = ta.highest(rtiVol, rtiLen)
+rtiMinV = ta.lowest(rtiVol, rtiLen)
+rtiRaw  = rtiMaxV != rtiMinV ? 100 * (rtiVol - rtiMinV) / (rtiMaxV - rtiMinV) : na
+rtiPrev = rtiRaw[1]
+rtiExpansion = not na(rtiRaw) and not na(rtiPrev) and rtiPrev <= 20 and rtiRaw >= 2 * rtiPrev
+
+[atrV, dma21, dma50, dLow, dOpen, dClose, dRng, dRngP, dBody, dBodyP, dAdr,
+     dAtrN, dAtrNback, dMaA, dMaB, dMaC, dBbWidth, dBbWidthLowN, dRti, dRtiExpansion] =
+     request.security(syminfo.tickerid, tf,
+     [atr, ma21, ma50, low, open, close, rng, rng[1], bdy, bdy[1], adr,
+      atrN, atrNback, maA, maB, maC, bbWidth, bbWidthLowN, rtiRaw, rtiExpansion])
+
+// ── Extension / range math.  KEEP IN SYNC with the screener columns near the end
+//    of visual_vtgCombo.pine (extLow / ext21 / ext50 / dayExp / bodyExp) so the
+//    number the Combo screener filters on == the number this table draws.
+//    (The four NEW v2 metrics below are NOT yet mirrored to the Combo screener
+//    — deliberately, until they've been verified on-chart. Port them over only
+//    after that.)
+ok(float x) => not na(x) and x != 0
+
+atrPct     = ok(atrV) and dClose != 0 ? atrV / dClose * 100 : na
+adrPct     = ok(dAdr) and dClose != 0 ? dAdr / dClose * 100 : na
+
+distATR(float x) => ok(atrV) and not na(x) ? (dClose - x) / atrV : na
+d21        = distATR(dma21)
+d50        = distATR(dma50)
+anchLow    = distATR(dLow)
+anchOpen   = distATR(dOpen)
+
+lodDistPct = dClose != 0 ? (dClose - dLow) / dClose * 100 : na
+dayExp     = ok(dRngP)  ? (dRng  / dRngP  - 1) * 100 : na
+bodyExp    = ok(dBodyP) ? (dBody / dBodyP - 1) * 100 : na
+extTgt21   = dma21 + atrV * mult21
+extTgt50   = dma50 + atrV * mult50
+
+// ── New v2 metrics, finished ────────────────────────────────────────────────
+contractionRatio = ok(dAtrNback) ? dAtrN / dAtrNback : na
+
+spreadHi = useMaC ? math.max(dMaA, math.max(dMaB, dMaC)) : math.max(dMaA, dMaB)
+spreadLo = useMaC ? math.min(dMaA, math.min(dMaB, dMaC)) : math.min(dMaA, dMaB)
+maSpread = ok(atrV) ? (spreadHi - spreadLo) / atrV : na
+
+bbInSqueeze = ok(dBbWidth) and not na(dBbWidthLowN) and dBbWidth <= dBbWidthLowN * bbSqueezeTol
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Chart: ATR extension target lines + extended-bar markers — unchanged
+// ═════════════════════════════════════════════════════════════════════════════
+plot(showLine21 ? extTgt21 : na, '21 ATR target', color = lineCol21, linewidth = 2)
+plot(showLine50 ? extTgt50 : na, '50 ATR target', color = lineCol50, linewidth = 2)
+
+plotchar(showChar21 and not na(d21) and d21 >= charThr21 ? 1 : na, '21 extended', char21, location.abovebar, charCol21, size = size.small)
+plotchar(showChar50 and not na(d50) and d50 >= charThr50 ? 1 : na, '50 extended', char50, location.abovebar, charCol50, size = size.small)
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Table
+// ═════════════════════════════════════════════════════════════════════════════
+posConst = switch tPos
+    'Top Left'     => position.top_left
+    'Top Right'    => position.top_right
+    'Middle Right' => position.middle_right
+    'Bottom Left'  => position.bottom_left
+    'Bottom Right' => position.bottom_right
+    => position.bottom_left
+
+fSize = switch tFont
+    'Tiny'   => size.tiny
+    'Small'  => size.small
+    'Normal' => size.normal
+    'Large'  => size.large
+    => size.small
+
+// Row background — text is always black (tTxt).  green = OK, red = caution.
+//   Low / Open / Day- & Body-Range-Expansion : red when the value is negative.
+//   21 / 50 MA distance : red when below the MA (negative) OR more than
+//                         odT21 / odT50 ATR above it (too extended to initiate).
+//   ATR% / ADR% / LoD / price / target rows stay neutral (tBg).
+//   NEW v2: contraction ratio / MA spread are green when ≤ their threshold
+//   (tight = contracting), red otherwise. BB squeeze / RTI are green only on
+//   an actual flagged event, tBg otherwise — "not currently squeezing" isn't
+//   a caution state the way overextension is, so it doesn't get red.
+bgSign(float v)         => na(v) ? tBg : v >= 0 ? colG : colR
+bgMA(float v, float od) => na(v) ? tBg : (v >= 0 and v <= od) ? colG : colR
+bgLE(float v, float thr) => na(v) ? tBg : v <= thr ? colG : colR
+bgFlag(bool f)          => f ? colG : tBg
+
+atrStr(float v) => na(v) ? '—' : str.tostring(v, '0.00') + ' ATR'
+pctStr(float v) => na(v) ? '—' : str.tostring(v, '#')    + '%'
+ratStr(float v) => na(v) ? '—' : str.tostring(v, '0.00')
+
+var table t = table.new(posConst, 2, 24, frame_color = color.new(color.black, 55), frame_width = 1, border_color = color.new(color.black, 80), border_width = 1)
+
+f_row(int r, string k, string v, color cellBg) =>
+    table.cell(t, 0, r, k + '  ', text_color = tTxt, text_size = fSize, text_halign = text.align_left, bgcolor = cellBg)
+    table.cell(t, 1, r, v,        text_color = tTxt, text_size = fSize, text_halign = text.align_left, bgcolor = cellBg)
+    r + 1
+
+if barstate.islast and timeframe.period != '1M'
+    table.clear(t, 0, 0, 1, 23)
+    int r = 0
+    if showAtrPct
+        r := f_row(r, 'ATR %',  str.tostring(atrPct, '0.00') + '%', tBg)
+    if showAdrPct
+        r := f_row(r, 'ADR %',  str.tostring(adrPct, '0.00') + '%', tBg)
+    if showAnchLow
+        r := f_row(r, 'Low',    atrStr(anchLow),  bgSign(anchLow))
+    if showAnchOpen
+        r := f_row(r, 'Open',   atrStr(anchOpen), bgSign(anchOpen))
+    if showLodDist
+        r := f_row(r, 'LoD dist', str.tostring(lodDistPct, '0.00') + '%', tBg)
+    if showLodPrice
+        r := f_row(r, 'LoD price', str.tostring(dLow, format.mintick), tBg)
+    if showDist21
+        r := f_row(r, str.tostring(p21) + ' ' + ma21Type, atrStr(d21), bgMA(d21, odT21))
+    if showDist50
+        r := f_row(r, str.tostring(p50) + ' ' + ma50Type, atrStr(d50), bgMA(d50, odT50))
+    if show21Price
+        r := f_row(r, str.tostring(p21) + ' ' + ma21Type + ' price', str.tostring(dma21, format.mintick), tBg)
+    if show50Price
+        r := f_row(r, str.tostring(p50) + ' ' + ma50Type + ' price', str.tostring(dma50, format.mintick), tBg)
+    if showDayExp
+        r := f_row(r, 'Day Range Expansion',  pctStr(dayExp),  bgSign(dayExp))
+    if showBodyExp
+        r := f_row(r, 'Body Range Expansion', pctStr(bodyExp), bgSign(bodyExp))
+    if showExtTgts
+        r := f_row(r, str.tostring(p21) + ' ATR target', str.tostring(extTgt21, format.mintick), tBg)
+        r := f_row(r, str.tostring(p50) + ' ATR target', str.tostring(extTgt50, format.mintick), tBg)
+    // ── New v2 rows ──────────────────────────────────────────────────────
+    if showContraction
+        r := f_row(r, 'ATR Contract (' + str.tostring(contractN) + '/' + str.tostring(contractM) + ')', ratStr(contractionRatio), bgLE(contractionRatio, contractThr))
+    if showMaSpread
+        maSpreadLbl = 'MA Spread (' + str.tostring(maA_len) + '/' + str.tostring(maB_len) + (useMaC ? '/' + str.tostring(maC_len) : '') + ')'
+        r := f_row(r, maSpreadLbl, atrStr(maSpread), bgLE(maSpread, maSpreadThr))
+    if showBBWidth
+        r := f_row(r, 'BB Width (' + str.tostring(bbLen) + ')', pctStr(dBbWidth) + (bbInSqueeze ? '  SQZ' : ''), bgFlag(bbInSqueeze))
+    if showRti
+        rtiTxt = na(dRti) ? '—' : str.tostring(dRti, '0') + (dRtiExpansion ? '  EXPAND' : dRti < 20 ? '  tight' : '')
+        r := f_row(r, 'RTI (' + rtiLookbackOpt + ')', rtiTxt, bgFlag(dRtiExpansion))
