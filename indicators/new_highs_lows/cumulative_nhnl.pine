@@ -1,0 +1,146 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © simsisim
+//
+// s-Cumulative NH-NL — NYSE cumulative New Highs minus New Lows breadth line.
+// Re-creation of the StockCharts "!NEWHINYC-!NEWLONYC Cumulative" chart.
+//
+//   net   = (NYSE new 52-week highs) - (NYSE new 52-week lows)     per day
+//   cum   = running sum of net since the start date
+//   signal line on cum:  SMA / EMA (default 10 SMA)  or  Parabolic SAR
+//
+// Use: cum below its signal line = risk OFF on the index,
+//      cum above its signal line = risk ON / buy-the-dip in progress.
+//
+// The absolute level of the line is meaningless (it depends on where the sum
+// starts); only its slope and its position vs the signal line matter.
+//
+// Data: TradingView breadth symbols. INDEX:MAHN / INDEX:MALN = NYSE 52-week
+// highs / lows (all issues, not StockCharts' "common stock only", so the
+// numbers are bigger but the shape is the same). Alternatives: INDEX:HIGN /
+// INDEX:LOWN (NYSE), INDEX:MAHQ / INDEX:MALQ (Nasdaq).
+//
+// SAR mode: Wilder's Parabolic SAR run on the single cumulative series
+// (high = low = cum), since ta.sar() only works on chart OHLC. The StockCharts
+// setting SAR(1.0, 1.0) makes it a tight 1-2 bar trailing stop.
+//
+//@version=6
+indicator('s-Cumulative NH-NL', 'Cum NH-NL', overlay = false, format = format.volume)
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Inputs
+// ═════════════════════════════════════════════════════════════════════════════
+gD = 'Data'
+hiSym    = input.symbol('INDEX:MAHN', 'New highs symbol', group = gD)
+loSym    = input.symbol('INDEX:MALN', 'New lows symbol',  group = gD)
+dataTf   = input.timeframe('D', 'Data timeframe (sum is built on this)', group = gD)
+useStart = input.bool(false, 'Start sum at date', group = gD, inline = 's')
+startT   = input.time(timestamp('2020-01-01'), '', group = gD, inline = 's')
+
+gS = 'Signal line'
+sigType = input.string('SMA', 'Type', ['SMA', 'EMA', 'Parabolic SAR'], group = gS)
+maLen   = input.int(10, 'MA length', minval = 1, group = gS)
+sarStart = input.float(1.0, 'SAR start',     minval = 0.001, step = 0.01, group = gS, inline = 'sar')
+sarInc   = input.float(1.0, 'increment',     minval = 0.0,   step = 0.01, group = gS, inline = 'sar')
+sarMax   = input.float(1.0, 'max',           minval = 0.001, step = 0.01, group = gS, inline = 'sar')
+
+gV = 'Visuals'
+colMode   = input.string('Below signal', 'Line turns red when', ['Below signal', 'Falling'], group = gV)
+colUp     = input.color(color.new(#1a1a8c, 0), 'Line risk ON',  group = gV, inline = 'lc')
+colDn     = input.color(color.new(#e53935, 0), 'risk OFF',      group = gV, inline = 'lc')
+colSig    = input.color(color.new(#5c6bc0, 0), 'Signal line',   group = gV)
+showFill  = input.bool(true,  'Area fill under line', group = gV)
+showBg    = input.bool(false, 'Shade pane background by regime', group = gV)
+showMarks = input.bool(true,  'Arrows in pane on signal flips', group = gV)
+showPrice = input.bool(false, 'Arrows on price chart on signal flips', group = gV)
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Core calculations
+// ═════════════════════════════════════════════════════════════════════════════
+// Sum is built inside request.security so a weekly chart still sums DAILY net.
+// Highs and lows are summed separately (cum(a) - cum(b) = cum(a - b)); the
+// optional start date keeps both sums aligned if the two histories differ.
+cumOf(sym) =>
+    request.security(sym, dataTf, ta.cum(not useStart or time >= startT ? nz(close) : 0.0), ignore_invalid_symbol = true)
+
+cumHi = cumOf(hiSym)
+cumLo = cumOf(loSym)
+cum   = cumHi - cumLo
+
+// Parabolic SAR on a single series (Wilder). dir: 1 = long, -1 = short, 0 = not started.
+sarOf(float src, float start, float inc, float mx) =>
+    var int   dir = 0
+    var float sar = na
+    var float ep  = na
+    var float af  = na
+    if not na(src) and not na(src[1])
+        if dir == 0
+            dir := src >= src[1] ? 1 : -1
+            sar := src[1]
+            ep  := src
+            af  := start
+        else
+            sar := sar + af * (ep - sar)
+            if dir == 1
+                // SAR may not sit above the prior two values
+                sar := math.min(sar, src[1], nz(src[2], src[1]))
+                if src < sar
+                    dir := -1
+                    sar := ep
+                    ep  := src
+                    af  := start
+                else if src > ep
+                    ep := src
+                    af := math.min(af + inc, mx)
+            else
+                sar := math.max(sar, src[1], nz(src[2], src[1]))
+                if src > sar
+                    dir := 1
+                    sar := ep
+                    ep  := src
+                    af  := start
+                else if src < ep
+                    ep := src
+                    af := math.min(af + inc, mx)
+    sar
+
+// Called on every bar (not inside the switch) so its var/history state stays consistent.
+sarVal = sarOf(cum, sarStart, sarInc, sarMax)
+sig = switch sigType
+    'SMA' => ta.sma(cum, maLen)
+    'EMA' => ta.ema(cum, maLen)
+    => sarVal
+
+riskOn  = cum >= sig
+flipOn  = riskOn and not riskOn[1] and not na(sig[1])
+flipOff = not riskOn and riskOn[1] and not na(sig[1])
+
+isRed   = colMode == 'Below signal' ? not riskOn : cum < cum[1]
+lineCol = isRed ? colDn : colUp
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Plots
+// ═════════════════════════════════════════════════════════════════════════════
+isSar = sigType == 'Parabolic SAR'
+pCum  = plot(cum, 'Cumulative NH-NL', lineCol, 2)
+plot(sig, 'Signal', colSig, isSar ? 2 : 1, isSar ? plot.style_circles : plot.style_line)
+
+// Area fill down to the visible-ish floor (lowest cum of the last ~year)
+pBase = plot(showFill ? ta.lowest(cum, 252) : na, 'Fill base', display = display.none)
+fill(pCum, pBase, showFill ? color.new(#66bb6a, 80) : na, 'Area')
+
+bgcolor(showBg ? (riskOn ? color.new(color.green, 90) : color.new(color.red, 90)) : na, title = 'Regime')
+
+plotshape(showMarks and flipOn,  'Risk ON (pane)',  shape.triangleup,   location.bottom, color.blue, size = size.tiny)
+plotshape(showMarks and flipOff, 'Risk OFF (pane)', shape.triangledown, location.top,    colDn,      size = size.tiny)
+plotshape(showPrice and flipOn,  'Risk ON (price)',  shape.triangleup,   location.belowbar, color.blue, size = size.small, force_overlay = true)
+plotshape(showPrice and flipOff, 'Risk OFF (price)', shape.triangledown, location.abovebar, colDn,      size = size.small, force_overlay = true)
+
+// Data-window only
+plot(cumHi - cumHi[1], 'New highs today', display = display.data_window)
+plot(cumLo - cumLo[1], 'New lows today',  display = display.data_window)
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Alerts
+// ═════════════════════════════════════════════════════════════════════════════
+alertcondition(flipOn,  'Cum NH-NL: risk ON',  'Cumulative NH-NL crossed ABOVE its signal line (risk on)')
+alertcondition(flipOff, 'Cum NH-NL: risk OFF', 'Cumulative NH-NL crossed BELOW its signal line (risk off)')

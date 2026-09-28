@@ -1,0 +1,220 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Algoryze (modified: previous day H/L uses regular session only, no premarket/after-hours)
+
+//@version=5
+indicator("Previous Day High and Low + Separators Daily/Weekly", overlay=true, max_lines_count = 500, max_boxes_count = 500, max_labels_count = 500)
+
+// Function to check if a new day has started
+_isNewDay(utcOffsetInMs) =>
+    dow = dayofweek(time + utcOffsetInMs)
+    dayChanged = dow != dow[1]
+    dayChanged
+
+// Function to check if a new week has started
+_isNewWeek(utcOffsetInMs) =>
+    woy = weekofyear(time + utcOffsetInMs)
+    weekChanged = woy != woy[1]
+    weekChanged
+
+_bottomMarkText(barTime, utcOffsetInMs) =>
+    var monthShortNames = array.from('', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec')
+    var weekdayShortNames = array.from('', 'Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat')
+    weekdayShort = array.get(weekdayShortNames, dayofweek(barTime + utcOffsetInMs))
+    out = ''
+         + weekdayShort
+         + ' ' + str.tostring(dayofmonth(barTime + utcOffsetInMs))
+         + ' ' + array.get(monthShortNames, month(barTime + utcOffsetInMs))
+         + " '" + str.substring(str.tostring(year(barTime + utcOffsetInMs), '#'), 2)
+         + ' ' + str.format_time(barTime, 'HH:mm')
+
+// Previous session high/low, computed only from bars inside the regular session
+_getPreviousDayHighLow(bool inSess, bool newSess) =>
+    var float prevDayHigh = na
+    var int   prevDayHighTime = na
+    var float prevDayLow = na
+    var int   prevDayLowTime = na
+
+    var float dayHigh = na
+    var int   dayHighTime = na
+    var float dayLow = na
+    var int   dayLowTime = na
+
+    if newSess
+        // close out the finished session (na on the very first one)
+        prevDayHigh := dayHigh
+        prevDayHighTime := dayHighTime
+        prevDayLow := dayLow
+        prevDayLowTime := dayLowTime
+
+        dayHigh := high
+        dayHighTime := time
+        dayLow := low
+        dayLowTime := time
+    else if inSess
+        if high > dayHigh
+            dayHigh := high
+            dayHighTime := time
+        if low < dayLow
+            dayLow := low
+            dayLowTime := time
+
+    [prevDayHigh, prevDayHighTime, prevDayLow, prevDayLowTime]
+
+// Input for custom UTC offset
+utcOffset = input.int(0, title="UTC Offset (in hours)", minval=-12, maxval=12)
+utcOffsetInMs = utcOffset * 60 * 60 * 1000
+
+// Regular session inputs (premarket / after-hours excluded from H&L)
+var sessionGroup = 'Previous Day H&L Session'
+hlMode = input.string('Regular only', title='H&L Range', options=['Regular only', 'Regular + Extended'], group=sessionGroup, tooltip='Regular only: ignore premarket/after-hours. Regular + Extended: use every bar of the calendar day in the session timezone.')
+regSession = input.session('0930-1600', title='Regular Session', group=sessionGroup)
+regSessionTz = input.string('America/New_York', title='Session Timezone', group=sessionGroup)
+
+// Daily separator inputs
+var dailyGroup = 'Daily Separator'
+dailySeparatorColor = input.color(color.orange, title='Color', group=dailyGroup)
+dailySeparatorStyleInput = input.string('Solid', title='Style', options=['Solid', 'Dotted'], display=display.none, group=dailyGroup)
+dailySeparatorWidthInput = input.int(1, title='Width', minval=1, display=display.none, group=dailyGroup)
+dailySeparatorLabelTextColor = input.color(color.white, title='Label Text Color', group=dailyGroup)
+dailySeparatorStyle = dailySeparatorStyleInput == 'Solid' ? line.style_solid : line.style_dotted
+
+// Weekly separator inputs
+var weeklyGroup = 'Weekly Separator'
+weeklySeparatorColorInput = input.color(color.gray, title='Color', group=weeklyGroup)
+weeklySeparatorStyleInput = input.string('Solid', title='Style', options=['Solid', 'Dotted'], display=display.none, group=weeklyGroup)
+weeklySeparatorWidthInput = input.int(3, title='Width', minval=1, display=display.none, group=weeklyGroup)
+weeklySeparatorStyle = weeklySeparatorStyleInput == 'Solid' ? line.style_solid : line.style_dotted
+
+var prevDayHLGroup = 'Previous Day H&L'
+prevDayHLColorInput = input.color(color.gray, title='Color', group=prevDayHLGroup)
+prevDayHLTextColorInput = input.color(color.orange, title='Text Color', group=prevDayHLGroup)
+prevDayHLStyleInput = input.string('Dotted', title='Style', options=['Solid', 'Dotted'], display=display.none, group=prevDayHLGroup)
+prevDayHLWidthInput = input.int(3, title='Width', minval=1, display=display.none, group=prevDayHLGroup)
+prevDayHLStyle = prevDayHLStyleInput == 'Solid' ? line.style_solid : line.style_dotted
+
+var pmGroup = 'Premarket H&L (today)'
+showPM = input.bool(true, title='Show Premarket High/Low', group=pmGroup)
+pmColorInput = input.color(color.aqua, title='Line Color', group=pmGroup)
+pmTextColorInput = input.color(color.aqua, title='Text Color', group=pmGroup)
+pmStyleInput = input.string('Dashed', title='Style', options=['Solid', 'Dotted', 'Dashed'], display=display.none, group=pmGroup)
+pmStyle = pmStyleInput == 'Solid' ? line.style_solid : pmStyleInput == 'Dotted' ? line.style_dotted : line.style_dashed
+
+var transpColor = color.new(color.white, 100)
+var weekdayFullNames = array.from('', 'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday')
+
+var box weekdayTopLabelBox = na
+var box[] weekdayTopLabels = array.new_box(0)
+var label[] weekdayBottomLabels = array.new_label(0)
+
+var string periodD = "D"
+var string periodW = "W"
+var string periodM = "M"
+var string periodY = "12M"
+var int mult = timeframe.multiplier
+var bool isHourly = timeframe.isminutes and mult % 60 == 0
+var bool isMinuteLessThan30 = timeframe.isminutes and mult < 30
+var string tfAuto =
+     timeframe.isseconds or isMinuteLessThan30 ? periodD :
+     isHourly ? periodW :
+     timeframe.isdaily ? periodM :
+     timeframe.isweekly or timeframe.ismonthly ? periodY :
+     periodW
+
+pivotLevels = ta.pivot_point_levels('Traditional', timeframe.change(tfAuto))
+pivot = array.get(pivotLevels, 0)
+weekdayTopLabelBoxTop = array.get(pivotLevels, 5)
+weekdayTopLabelBoxBottom = array.get(pivotLevels, 4)
+
+weekdayBottomLabelLevel = array.get(pivotLevels, 6)
+
+isNewPivot = pivot != pivot[1]
+isNewDay = _isNewDay(utcOffsetInMs)
+isNewWeek = _isNewWeek(utcOffsetInMs)
+
+// Regular-session detection
+regularOnly = hlMode == 'Regular only'
+inRegular = not na(time(timeframe.period, regSession, regSessionTz))
+dayInTz = dayofweek(time, regSessionTz)
+inSession = regularOnly ? inRegular : true
+newSession = regularOnly ? (inRegular and not inRegular[1]) : (dayInTz != dayInTz[1])
+
+// Plot daily separator line
+if isNewDay
+    weekdayFull = array.get(weekdayFullNames, dayofweek(time + utcOffsetInMs))
+    line.new(bar_index, low, bar_index, high, style=dailySeparatorStyle, width=dailySeparatorWidthInput, color=dailySeparatorColor, extend=extend.both)
+    weekdayTopLabelBox := box.new(bar_index, weekdayTopLabelBoxTop, bar_index, weekdayTopLabelBoxBottom, xloc=xloc.bar_index, bgcolor=transpColor, border_color=transpColor, text=weekdayFull, text_color=dailySeparatorColor, text_size=size.small, text_halign = text.align_center, text_valign = text.align_top)
+    array.push(weekdayTopLabels, weekdayTopLabelBox)
+    array.push(weekdayBottomLabels, label.new(bar_index, weekdayBottomLabelLevel, text=_bottomMarkText(time, utcOffsetInMs), color=dailySeparatorColor, textcolor=dailySeparatorLabelTextColor , style=label.style_label_up))
+else
+    box.set_right(weekdayTopLabelBox, bar_index)
+
+if isNewPivot and array.size(weekdayTopLabels) > 0
+    for i = 0 to array.size(weekdayTopLabels) - 1
+        box.set_top(array.get(weekdayTopLabels, i), weekdayTopLabelBoxTop)
+        box.set_bottom(array.get(weekdayTopLabels, i), weekdayTopLabelBoxBottom)
+        label.set_y(array.get(weekdayBottomLabels, i), weekdayBottomLabelLevel)
+
+// Plot weekly separator line
+if isNewWeek
+    line.new(bar_index, low, bar_index, high, color=weeklySeparatorColorInput, style=weeklySeparatorStyle, width=weeklySeparatorWidthInput, extend=extend.both)
+
+// Plot highest and lowest prices of the previous regular session
+[prevDayHigh, prevDayHighTime, prevDayLow, prevDayLowTime] = _getPreviousDayHighLow(inSession, newSession)
+var line prevDayHighLine = line.new(time, high, time, high, xloc=xloc.bar_time, color=prevDayHLColorInput, width=1)
+var label prevDayHighLabel = label.new(time, high, xloc=xloc.bar_time, text='HOD', color=transpColor, textcolor=prevDayHLTextColorInput, style=label.style_label_down)
+
+var line prevDayLowLine = line.new(time, low, time, low, xloc=xloc.bar_time, color=prevDayHLColorInput, width=1)
+var label prevDayLowLabel = label.new(time, low, xloc=xloc.bar_time, text='LOD', color=transpColor, textcolor=prevDayHLTextColorInput, style=label.style_label_up)
+
+if newSession and not na(prevDayHigh)
+    line.set_xy1(prevDayHighLine, prevDayHighTime, prevDayHigh)
+    line.set_xy2(prevDayHighLine, prevDayHighTime, prevDayHigh)
+    label.set_xy(prevDayHighLabel, prevDayHighTime, prevDayHigh)
+
+    line.set_xy1(prevDayLowLine, prevDayLowTime, prevDayLow)
+    line.set_xy2(prevDayLowLine, prevDayLowTime, prevDayLow)
+    label.set_xy(prevDayLowLabel, prevDayLowTime, prevDayLow)
+else if not na(prevDayHigh)
+    t = time
+    line.set_x2(prevDayHighLine, t)
+    label.set_x(prevDayHighLabel, t)
+
+    line.set_x2(prevDayLowLine, t)
+    label.set_x(prevDayLowLabel, t)
+
+// Premarket high/low of the current day: bars outside the regular session, before its open (needs extended-hours data)
+regStartMin = int(str.tonumber(str.substring(regSession, 0, 2))) * 60 + int(str.tonumber(str.substring(regSession, 2, 4)))
+barMin = hour(time, regSessionTz) * 60 + minute(time, regSessionTz)
+isPre = not inRegular and barMin < regStartMin
+newPre = isPre and not isPre[1]
+
+var float pmHigh = na
+var int   pmHighTime = na
+var float pmLow = na
+var int   pmLowTime = na
+
+if newPre
+    pmHigh := high
+    pmHighTime := time
+    pmLow := low
+    pmLowTime := time
+else if isPre
+    if high > pmHigh
+        pmHigh := high
+        pmHighTime := time
+    if low < pmLow
+        pmLow := low
+        pmLowTime := time
+
+var line pmHighLine = line.new(time, high, time, high, xloc=xloc.bar_time, color=pmColorInput, style=pmStyle, width=1)
+var label pmHighLabel = label.new(time, high, xloc=xloc.bar_time, text='PMH', color=transpColor, textcolor=pmTextColorInput, style=label.style_label_down)
+var line pmLowLine = line.new(time, low, time, low, xloc=xloc.bar_time, color=pmColorInput, style=pmStyle, width=1)
+var label pmLowLabel = label.new(time, low, xloc=xloc.bar_time, text='PML', color=transpColor, textcolor=pmTextColorInput, style=label.style_label_up)
+
+if showPM and not na(pmHigh)
+    line.set_xy1(pmHighLine, pmHighTime, pmHigh)
+    line.set_xy2(pmHighLine, time, pmHigh)
+    label.set_xy(pmHighLabel, time, pmHigh)
+    line.set_xy1(pmLowLine, pmLowTime, pmLow)
+    line.set_xy2(pmLowLine, time, pmLow)
+    label.set_xy(pmLowLabel, time, pmLow)
