@@ -121,6 +121,10 @@ into one multi-line label).
 
 ## 5. "Show Labels Only on Current Bar" semantics  — RESOLVED
 
+> **Superseded (2026-09-28):** replaced by the `Show triggers on` dropdown
+> (All bars / Current bar only / Last N bars), which now scopes bar paint too,
+> plus the ID breakout line and VTG New base box. Original decision kept below.
+
 - **true** (default): every label / triangle renders only when `barstate.islast`.
   **Bar coloring is unaffected — it stays historical** (context, not clutter).
   Table is last-bar anyway.

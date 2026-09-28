@@ -26,7 +26,8 @@ Add to a **Daily** chart. You get:
 - 21 EMA cloud (EMA of high / EMA of low) + 50 SMA
 - ATR-extension table (price distance from each MA in ATR units)
 - Trigger labels — toggle each in *Triggers to label on chart*
-- `Show labels only on current bar` to declutter history
+- `Show triggers on: All bars / Current bar only / Last N bars` to declutter history
+  (scopes painted bars, labels, ID breakout line and VTG New base box together)
 
 ## Screener mode
 
@@ -38,27 +39,29 @@ Add to a **Daily** chart. You get:
    and add it again** — the screener caches the old column list.
 4. Set the timeframe to **1D** and press **Scan**. Every column shows `—` until
    you press Scan.
-5. Click the **column manager** (the icon top-right of the table) and tick the
+5. **Triggers are filters, not columns** — add a filter chip from the
+   `alertcondition()` names: `Slingshot Triggered`, `Breakout Triggered`,
+   `4% Breakout Triggered`, `Inside Day Breakout Triggered`, `OEL Triggered`, …
+   It keeps only the tickers where that trigger fired on the last bar
+   (Oliver's `Breakout Triggered = True`).
+   Click the **column manager** (the icon top-right of the table) and tick the
    columns you want:
-   - **Trigger columns** — `Slingshot`, `Breakout`, `4% Breakout`, `Inside Day
-     Breakout`, `OEL`, … Each is **1** when it fired on the last bar, **0** when
-     not. Add a filter on it: `> 0` keeps only the tickers where it fired
-     (Oliver's `Breakout Triggered = True`). Sort by it too.
    - **Metric columns** — mirror the s-VTG ATR table so you screen extension in
      the same pass: `21 EMA (ATR)`, `50 SMA (ATR)`, `Low (ATR)`,
      `Day Range Exp %`, `Body Range Exp %`, `Move / ATR`, `Chg 1D %`, `$ Vol (M)`.
-6. Combine e.g. `Slingshot > 0` **and** `21 EMA (ATR) < 3` **and**
+6. Combine e.g. `Slingshot Triggered` **and** `21 EMA (ATR) < 3` **and**
    `Day Range Exp % > 0` **and** `$ Vol (M) ≥ 20` — trigger fired, not yet
    overextended, range expanding, liquid.
 
-The `alertcondition()` names ending in *"Triggered"* also show up as screener
-**filters**, but they can't be added as visible columns — ignore them and use the
-plain `plot()` columns above (no *"Triggered"* suffix).
+Why no 1/0 trigger columns: `alertcondition()` counts toward Pine's 64-plot
+limit, and chips + 1/0 columns for every trigger went over it (73). The chips
+filter identically, so the columns were dropped (2026-09-28). The pre-change
+version with trigger columns is kept as `ORIG_visual_vtgCombo.pine`.
 
 Screener notes / limits:
 - Screener evaluates the **last bar only** — no historical scanning.
 - Cells show values only — **no cell colouring**, no ✓/✗ glyphs (that lives on
-  the s-VTG ATR on-chart table). A trigger column is `1`/`0`; sort / filter it.
+  the s-VTG ATR on-chart table).
 - Every column is always available (the chart `Show *` toggles do **not** affect
   the screener).
 - Set the Pine Screener timeframe to **1D** to match the intended setups.
@@ -122,8 +125,11 @@ Day, OEL/OEH, Engulf, Kicker, 4%, ATR filters) are unaffected by either.
   used for the painted bar **and** the label background. *(Pine can't put
   `barcolor` colours in the Style tab, so they're in Inputs.)*
 - **Labels** — one small tag per firing method, **stacked** above the candle,
-  each in its own method colour. Shown on **every** bar (history included) unless
-  `Show Labels Only on Current Bar`. Master switch `Show trigger labels`; text
+  each in its own method colour. Shown on every bar within the
+  `Show triggers on` scope (All bars / Current bar only / Last N bars), which
+  also limits the painted bars, ID breakout line and VTG New base box. Live
+  caveat: a bar that fired while forming keeps its paint after the window moves
+  past it (Pine can't un-paint a closed bar); labels/lines/boxes are deleted. Master switch `Show trigger labels`; text
   auto black/white for contrast; stack spacing set by `Label stack spacing
   (× ATR)`.
 - **Multiple triggers on one bar:** every one gets its own stacked tag; the
@@ -148,11 +154,12 @@ EXTRA (off by default): Super Oops, OEH, Kicker, 3-Bar, Engulf, N-day High Break
 independent triggers, `Show VTG Breakout (Old)` and `Show VTG Breakout (New)`.
 You can turn on both together to compare them on the same chart. Old = 4/9 EMA
 compression + tight candle, then expansion. New = a qualified 3+ bar base near a
-rising 21 EMA, then a strong-close/volume breakout (the base gets a box around it). Screener columns
-`VTG BO Old` / `VTG BO New` / `VTG Base New`; Discord checkboxes in
+rising 21 EMA, then a strong-close/volume breakout (the base gets a box around it). Screener filters
+`VTG Breakout (Old) Triggered` / `VTG Breakout (New) Triggered` /
+`VTG Base (New) Qualified`; Discord checkboxes in
 `visual_vtgComboTriggers.pine`. Definitions: `signal_spec.md`.
 
 > Every screener column is a `plot()` with `display = display.none, editable =
-> false` (triggers plot `1`/`0`, metrics plot the value). If a column fails to
+> false` (metrics only — triggers are `alertcondition()` filter chips). If a column fails to
 > appear, temporarily switch that block to `display = display.all`, and remember
 > to remove + re-add the indicator in the screener after every edit.
