@@ -1,7 +1,7 @@
 // This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
 // © simsisim
 //
-// s-TC Base Breakout — tight-base methods side by side, indicator + Pine Screener.
+// s-TC Contraction Expansion — tight-setup (contraction) + release (expansion) methods side by side, indicator + Pine Screener.
 //
 //   OLD  — Voyage card "VTG Breakout Signal: Old vs New", left column
 //          (gd_systems/tradying_voyage/HS2aXjWbIAAoVyX.jpeg) = the book's
@@ -32,7 +32,7 @@
 // No request.* -> screener-safe. Daily chart.
 //
 //@version=6
-indicator('s-TC Base Breakout', 'TC Base BO', overlay = true, max_labels_count = 500, max_boxes_count = 200)
+indicator('s-TC Contraction Expansion', 'TC ContrExp', overlay = true, max_labels_count = 500, max_boxes_count = 200)
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Inputs
@@ -445,21 +445,34 @@ if barstate.islast and showTable
 volRatio   = ok(volAvg) ? volume / volAvg : na
 dayChgPct  = close[1] != 0 ? (close - close[1]) / close[1] * 100 : na
 dollarVolM = close * volume / 1e6
+lodDistPct = close != 0 ? (close - low) / close * 100 : na   // same as the s-VTG ATR 'LoD dist' row
+lodAtr     = atr != 0 ? (close - low) / atr : na             // same as s-VTG Combo 'Low (ATR)'
 pivotPct   = newBase and close != 0 ? (baseHi - close) / close * 100 : na
 
-alertcondition(newFired, 'TC New Breakout',        'TC: New base breakout {{ticker}} @ {{close}}')
-alertcondition(oldFired, 'TC Old Breakout',        'TC: Old compression breakout {{ticker}} @ {{close}}')
-alertcondition(tnoFired, 'TC T&O Breakout',        'TC: T&O breakout {{ticker}} @ {{close}}')
-alertcondition(newBase,  'TC New Base',            'TC: New qualified base {{ticker}}')
-alertcondition(oldBase,  'TC Old Base',            'TC: Old 4/9 compression base {{ticker}}')
-alertcondition(tno,      'TC T&O State',           'TC: Tight & orderly {{ticker}}')
-alertcondition(glpOK,    'TC Golden Launch Pad',   'TC: Golden Launch Pad {{ticker}}')
-alertcondition(rtiOK,    'TC RTI zone 1-2',        'TC: RTI zone 1-2 {{ticker}}')
+// Pine Screener filters: each alertcondition() title shows up in the screener as a
+// True/False filter chip (same pattern as s-VTG Combo). "... Triggered" = a breakout
+// fired on the last bar; "... Qualified" = the setup/state is present on the last bar.
+anyFired = oldFired or newFired or tnoFired
+alertcondition(anyFired, 'TC Any Triggered',                  'TC: breakout (any method) {{ticker}} @ {{close}}')
+alertcondition(oldFired, 'TC Old (Squeeze Expansion) Triggered', 'TC: Old squeeze expansion {{ticker}} @ {{close}}')
+alertcondition(newFired, 'TC New (Base Breakout) Triggered',  'TC: New base breakout {{ticker}} @ {{close}}')
+alertcondition(tnoFired, 'TC T&O Breakout Triggered',         'TC: T&O breakout {{ticker}} @ {{close}}')
+alertcondition(oldBase,  'TC Old Base Qualified',             'TC: Old 4/9 compression base {{ticker}}')
+alertcondition(newBase,  'TC New Base Qualified',             'TC: New qualified base {{ticker}}')
+alertcondition(tno,      'TC T&O State Qualified',            'TC: Tight & orderly {{ticker}}')
+alertcondition(glpOK,    'TC Golden Launch Pad Qualified',    'TC: Golden Launch Pad {{ticker}}')
+alertcondition(rtiOK,    'TC RTI zone 1-2 Qualified',         'TC: RTI zone 1-2 {{ticker}}')
 
-plot(oldFired or newFired or tnoFired ? 1 : 0, 'TC Signal (any) 1/0', display = display.none, editable = false)
+// Sortable/visible columns: only plot() outputs can be added via "Manage columns".
+// Filter "> 0" on any 1/0 column for the same result as the True filters above.
+plot(anyFired ? 1 : 0,        'TC Signal (any) 1/0', display = display.none, editable = false)
 plot(newFired ? 1 : 0,        'TC New BO 1/0',            display = display.none, editable = false)
 plot(oldFired ? 1 : 0,        'TC Old BO 1/0',            display = display.none, editable = false)
 plot(tnoFired ? 1 : 0,        'TC T&O BO 1/0',            display = display.none, editable = false)
+plot(oldBase ? 1 : 0,         'TC Old base 1/0',          display = display.none, editable = false)
+plot(newBase ? 1 : 0,         'TC New base 1/0',          display = display.none, editable = false)
+plot(tno ? 1 : 0,             'TC T&O state 1/0',         display = display.none, editable = false)
+plot(glpOK ? 1 : 0,           'TC GLP 1/0',               display = display.none, editable = false)
 plot(newBase ? baseN : 0,     'TC New base length',       display = display.none, editable = false)
 plot(pivotPct,                'TC To pivot %',            display = display.none, editable = false)
 plot(inUnit(closeDiff),       'TC Last 2 closes (unit)',  display = display.none, editable = false)
@@ -480,4 +493,6 @@ plot(d21,                     'TC Ext 21 EMA (ATR)',      display = display.none
 plot(d50,                     'TC Ext 50 SMA (ATR)',      display = display.none, editable = false)
 plot(volRatio,                'TC Vol / MA',              display = display.none, editable = false)
 plot(dayChgPct,               'TC Chg 1D %',              display = display.none, editable = false)
+plot(lodDistPct,              'TC LoD Dist %',            display = display.none, editable = false)
+plot(lodAtr,                  'TC Low (ATR)',             display = display.none, editable = false)
 plot(dollarVolM,              'TC $ Vol (M)',             display = display.none, editable = false)

@@ -7,7 +7,7 @@ s-VTG ATR) or `oliverKell/` (s-OK Cycle).
 
 | File | Script name | Card |
 |---|---|---|
-| `tcBaseBreakout.pine` | `s-TC Base Breakout` (`TC Base BO`) | "VTG Breakout Signal — Old vs New" (`gd_systems/tradying_voyage/HS2aXjWbIAAoVyX.jpeg`) + book rules + dashboard "Tight & orderly" stage |
+| `tcContractionExpansion.pine` | `s-TC Contraction Expansion` (`TC ContrExp`) | "VTG Breakout Signal — Old vs New" (`gd_systems/tradying_voyage/HS2aXjWbIAAoVyX.jpeg`) + book rules + dashboard "Tight & orderly" stage |
 | `tcCoilBreakout.pine` | `s-TC Coil Breakout` (`TC Coil`) | "Best actual breakout: tight coil under resistance" — `gd_systems/tradying_voyage/HS7qCHxbMAAaN8g.jpeg` |
 
 Both are **daily-oriented**, use **no `request.*`** (screener-safe), and every
@@ -30,7 +30,7 @@ brk(lvl)   = (confirmBody ? min(open, close) : close) > lvl     // close-confirm
 - **Cooldown** per signal: after a signal fires, the same signal is suppressed for
   `cooldown` bars (default 3). Each signal has its own counter.
 - **Show switches** only hide the visuals; the screener/alert columns are always computed.
-- Screener: `alertcondition()` → True/False filter column;
+- Screener: `alertcondition()` → True/False filter (not a column);
   `plot(..., display.none)` → numeric sortable column.
 
 ### "Longest qualifying window" search (used by both scripts)
@@ -48,7 +48,7 @@ the **previous** bar (`base[1]`, `baseHi[1]`, …).
 
 ---
 
-## 1. `tcBaseBreakout.pine` — s-TC Base Breakout  (3 methods side by side)
+## 1. `tcContractionExpansion.pine` — s-TC Contraction Expansion  (3 methods side by side)
 
 One indicator, three ways of defining a tight base, so they can be compared on
 the same chart:
@@ -241,19 +241,36 @@ Known small differences from the Python run:
 
 ### Screener columns
 
-Filters: `TC New Breakout`, `TC Old Breakout`, `TC T&O Breakout`, `TC New Base`,
-`TC Old Base`, `TC T&O State`, `TC Golden Launch Pad`, `TC RTI zone 1-2`
+Filters (True/False, same pattern as s-VTG Combo). Pick one in the Pine Screener and set it to **True**.
+"Triggered" = the breakout happened on the last bar. "Qualified" = the setup is there now and you're waiting for the breakout.
 
-Numeric: `TC Signal (any) 1/0`, `TC New BO 1/0`, `TC Old BO 1/0`, `TC T&O BO 1/0`,
+| Filter | True when |
+|---|---|
+| `TC Any Triggered` | any of the three breakouts fired on the last bar |
+| `TC Old (Squeeze Expansion) Triggered` | the OLD expansion bar fired |
+| `TC New (Base Breakout) Triggered` | it closed above the NEW base high |
+| `TC T&O Breakout Triggered` | the T&O breakout fired |
+| `TC Old Base Qualified` | the 4/9 EMA squeeze is present now |
+| `TC New Base Qualified` | a NEW base has formed and hasn't broken out yet |
+| `TC T&O State Qualified` | the stock is in the "Tight & orderly" state |
+| `TC Golden Launch Pad Qualified` | the Golden Launch Pad check passes |
+| `TC RTI zone 1-2 Qualified` | RTI(50) is in zone 1 or 2 |
+
+After any edit to the script: remove it from the screener, add it back, then press **Scan** (the screener caches the compiled script; columns show `—` until you scan).
+
+Numeric (addable via Manage columns; `> 0` on a 1/0 column = the same as the True filter): `TC Signal (any) 1/0`, `TC New BO 1/0`, `TC Old BO 1/0`, `TC T&O BO 1/0`,
+`TC Old base 1/0`, `TC New base 1/0`, `TC T&O state 1/0`, `TC GLP 1/0`,
 `TC New base length`, `TC To pivot %`, `TC Last 2 closes (unit)`, `TC 4/9/21 spread (unit)`,
 `TC 4/9 squeeze bars`, `TC 4/9 gap (unit)`, `TC ATR now / base start`, `TC Base close span (ATR)`, `TC Base vol / avg`, `TC Leg before base %`,
 `TC RTI`, `TC RTI zone`, `TC GLP z-spread`, `TC GLP score`, `TC Ext 21 EMA (ATR)`,
-`TC Ext 50 SMA (ATR)`, `TC Day range exp %`, `TC Body range exp %`, `TC Vol / MA`, `TC Chg 1D %`, `TC $ Vol (M)`
+`TC Ext 50 SMA (ATR)`, `TC Day range exp %`, `TC Body range exp %`, `TC Vol / MA`, `TC Chg 1D %`,
+`TC LoD Dist %` (`(close − low) / close × 100`, same as the s-VTG ATR LoD dist row),
+`TC Low (ATR)` (`(close − low) / atr`, same as s-VTG Combo `Low (ATR)`), `TC $ Vol (M)`
 
-**1:1 check against Python.** Run the Pine Screener with `TC T&O State` = true and
+**1:1 check against Python.** Run the Pine Screener with `TC T&O State Qualified` = True and
 `Include upstream stages` on. Then compare the list with the dashboard's "Tight & orderly"
 stage output for the same date (`results/<date>/workflows/Trading Voyage _Ollie__Tight _ orderly_<date>.txt`).
-After that, compare against `TC New Base` to see how the book-based definition differs.
+After that, compare against `TC New Base Qualified` to see how the book-based definition differs.
 
 ---
 
