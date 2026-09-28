@@ -164,6 +164,49 @@ breakoutTrig = slingshot or fourPctBO or idBreakUp or oel
 
 ---
 
+## VTG Breakout Signal — Old vs New  — PROVISIONAL
+
+Source: Voyage card "VTG Breakout Signal — Old vs New"
+(`gd_systems/tradying_voyage/HS2aXjWbIAAoVyX.jpeg`). The card gives only
+bullet points, so every threshold below is our own guess and can be tuned in
+the *VTG Breakout Signal (Old / New)* input group. The two are **independent
+triggers** (`Show VTG Breakout (Old)` / `(New)`). You can turn both on together.
+If both fire on the same bar you get the merged `VTG BO Old + VTG BO New` tag and
+the magenta multi-trigger colour.
+
+### Old — "detect the breakout" (minimal base input)
+```
+spread  = ema(close,4) - ema(close,9)
+base    = |spread[1]| <= 0.5*atr[1]          // 4/9 EMA compression
+          and range[1] <= 0.8*atr[1]         // last candle tight
+vbOldBO = base and spread > 0 and spread > spread[1]   // EMA expansion (up)
+          and range > range[1]                          // range expands vs prior day
+          and atr > atr[1]                              // rising ATR
+          and f_confUp(high[1])                         // direction filter (toggle)
+```
+
+### New — "qualify the base, then detect the breakout"
+```
+N = 3 (base length, min)                      // "3+ day base"
+base (bars ending here):
+    highest(close,N) - lowest(close,N) <= 1.0*atr       // tight, controlled closes
+    lowest(close - ema21, N) >= -0.25*atr               // closes hold the 21 EMA
+    lowest(low   - ema21, N) <=  1.0*atr                // pullback toward the 21 EMA
+    ema21 > ema21[N]                                    // 21 EMA rising
+    atr < atr[N]                                        // ATR decreasing
+vbNewBO = base[1]                                       // qualified base first
+          and f_confUp(highest(high,N)[1])              // breakout candle clears the base high
+          and close in top 30% of the bar range         // strong close
+          and volume >= 1.0 * sma(volume,50)            // volume
+          and atr > atr[1]                              // rising ATR
+```
+The chart draws a box around the qualified base on each New breakout (`New:
+draw the qualified base box`). Screener columns: `VTG BO Old`, `VTG BO New`,
+`VTG Base New`. The last one is 1 when a qualified base ends on the last bar,
+so you can use it to build a watchlist.
+
+---
+
 ## EXTRA triggers (kept, default OFF)
 
 | Trigger | Logic |
