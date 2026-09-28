@@ -1,0 +1,286 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © simsisim
+//
+// s-VTG Combo Triggers — alert-only companion to visual_vtgCombo.pine.
+// KEEP IN SYNC: the trigger math below (Slingshot ... N-day Breakout) is
+// duplicated from the "Engine" section of visual_vtgCombo.pine. If a trigger's
+// definition changes there, change it here too.
+//
+// Purpose: this script does nothing visual and is not a screener source — no
+// plots, no bar colouring, no labels, no EMA/SMA lines, no ATR table, no
+// Pine Screener plot() columns. Its only job is to fire ONE Discord-ready
+// alert() per checked trigger on bar close, so you create exactly ONE
+// TradingView alert per symbol instead of one per trigger per symbol.
+//
+// Setup:
+//   1. Add to a Daily chart (same native-TF requirement as s-VTG Combo — no
+//      request.*, all setups are daily-oriented).
+//   2. Open Settings -> "Alerts" and tick the triggers you want sent.
+//   3. Create ONE alert on this indicator: Condition = "s-VTG Combo Triggers"
+//      -> "Any alert() function call", Frequency = "Once Per Bar Close".
+//   4. In the alert's Notifications tab, tick "Webhook URL" and paste your
+//      Discord webhook URL there. That destination can ONLY be set in this
+//      dialog — Pine has no way to read or send to a URL from inside the
+//      script, so the "Message" box content is also ignored for alert()
+//      firings (the JSON text below is what actually gets sent).
+//   5. Want a full day's heads-up instead of waiting for the daily close?
+//      Change the alert's Frequency to "Once Per Bar" instead — same script,
+//      no edits, just evaluates against the still-forming daily bar. It can
+//      then fire on a condition that later reverses before the real close.
+//
+// Native chart timeframe. No request.* -> nothing here repaints across TFs.
+
+//@version=6
+indicator('s-VTG Combo Triggers', 'VTG Triggers', overlay = true)
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Inputs — trigger-math parameters only (mirrors visual_vtgCombo.pine, minus
+// every visual/colour/screener input).
+// ═════════════════════════════════════════════════════════════════════════════
+gSig = 'Signal confirmation'
+confirmBody = input.bool(false, 'Confirm on full body (else close)', group = gSig, tooltip = 'A level-break signal needs the CLOSE beyond the level (or the whole candle body if this is on). A wick that pierces the level and then fades back does not count.')
+livePreview = input.bool(false, 'Live intrabar preview on the forming bar', group = gSig, tooltip = 'OFF (default): pure close-confirmed everywhere. ON: while the current bar is still forming, a signal can go tentatively true off the wick and un-fire on close if it did not confirm — only affects the current bar, never history.')
+
+gS = 'Slingshot'
+slingEmaLen = input.int(4, 'Slingshot EMA length', minval = 1, group = gS)
+slingEmaSrc = input.string('High', 'Slingshot EMA source', ['High', 'Close'], group = gS)
+slingBars   = input.int(3, 'Pullback bars below EMA', minval = 1, group = gS)
+slingPbSrc  = input.string('Close', 'Pullback test uses', ['Close', 'High'], group = gS)
+
+gID = 'Inside Day'
+idBoWindow = input.int(3, 'Breakout window (bars after the inside day)', minval = 1, group = gID)
+
+g4 = '4% Breakout'
+pctThresh = input.float(4.0, 'Day move threshold %', minval = 0, group = g4)
+atrMax    = input.float(4.0, 'Max ATR (price units)', minval = 0, group = g4)
+
+gP = 'Pre-Slingshot'
+preTrendLook = input.int(5,     'Trend lookback (EMA rising)', minval = 1, group = gP)
+preNearK     = input.float(0.75,'Max distance to EMA (xATR)',  minval = 0, group = gP)
+
+gO = 'OEL / OEH'
+oelTicks  = input.float(0.0,  'OEL/OEH tolerance (ticks)', minval = 0, group = gO)
+oelGapOnly= input.bool(false, 'OEL only on gap-up into prior upper wick', group = gO)
+
+gCmp = 'Breakout composite'
+compUnder1Atr = input.bool(false, 'Restrict "Breakout" to moves < 1 ATR', group = gCmp)
+
+gX = 'N-day High Breakout'
+boPrice     = input.int(60,  'N-day: price lookback',  minval = 1, group = gX)
+boVol       = input.int(60,  'N-day: volume lookback', minval = 1, group = gX)
+boTrend     = input.int(200, 'N-day: trend SMA',       minval = 1, group = gX)
+boUseVol    = input.bool(true, 'N-day: require volume expansion',      group = gX)
+boUseTrend  = input.bool(true, 'N-day: require close above trend SMA', group = gX)
+
+gVB = 'VTG Breakout Signal (Old / New)'
+// OLD — minimal base: 4/9 EMA compression + tight last candle, then expansion.
+vbOldFast   = input.int(4,     'Old: fast EMA',                     minval = 1, group = gVB)
+vbOldSlow   = input.int(9,     'Old: slow EMA',                     minval = 1, group = gVB)
+vbOldCompK  = input.float(0.5, 'Old: base 4/9 EMA gap <= (x ATR)',  minval = 0, step = 0.05, group = gVB, tooltip = 'EMA compression: on the bar before the breakout, |fast EMA - slow EMA| must be at most this many ATR.')
+vbOldTightK = input.float(0.8, 'Old: base candle range <= (x ATR)', minval = 0, step = 0.05, group = gVB, tooltip = 'Tight last candle: the bar before the breakout has a range of at most this many ATR.')
+vbOldNeedHi = input.bool(true, 'Old: require close above prior high', group = gVB, tooltip = 'Direction filter so the expansion bar is an up-breakout. Uses the global confirmation rule (close / full body / live preview).')
+// NEW — qualify the base first, then detect the breakout.
+vbNewEmaLen = input.int(21,    'New: trend EMA length',                 minval = 1, group = gVB)
+vbBaseLen   = input.int(3,     'New: base length (bars, min)',          minval = 2, group = gVB, tooltip = 'The base is the last N bars before the breakout bar ("3+ day base"). A longer base also passes — its last N bars are a base too.')
+vbTightK    = input.float(1.0, 'New: base closes span <= (x ATR)',      minval = 0, step = 0.05, group = gVB, tooltip = 'Tight, controlled closes: highest close - lowest close in the base is at most this many ATR.')
+vbNearK     = input.float(1.0, 'New: base low within (x ATR) of EMA',   minval = 0, step = 0.05, group = gVB, tooltip = 'Pullback toward the 21 EMA: the lowest low of the base came within this many ATR of the EMA.')
+vbUnderK    = input.float(0.25,'New: closes may undercut EMA by (x ATR)',minval = 0, step = 0.05, group = gVB, tooltip = 'Every base close must hold above the EMA minus this many ATR (0 = strictly above).')
+vbTopPct    = input.float(30,  'New: close in top X% of breakout bar',  minval = 1, maxval = 100, group = gVB)
+vbVolMult   = input.float(1.0, 'New: volume >= (x average)',            minval = 0, step = 0.1, group = gVB, tooltip = '0 disables the volume check. On the forming bar volume is still partial, so this can lag intraday.')
+vbVolLen    = input.int(50,    'New: average volume length',            minval = 1, group = gVB)
+
+gATR = 'ATR'
+atrLen = input.int(14, 'ATR length', minval = 1, group = gATR)
+
+gA = 'Alerts (checked = sent via "Any alert() function call")'
+alertAll        = input.bool(false, 'All (fires every trigger below, ignoring the individual checkboxes)', group = gA)
+alertSlingshot  = input.bool(true,  'Slingshot (4 EMA, High)', group = gA)
+alert4EmaCloseX = input.bool(true,  '4 EMA Close Cross',       group = gA)
+alertSlingClose = input.bool(false, 'Slingshot (4 EMA, Close)',group = gA)
+alertBreakout   = input.bool(false, 'Breakout (composite)',    group = gA)
+alert4pct       = input.bool(false, '4% Breakout',             group = gA)
+alertPreSling   = input.bool(false, 'Pre-Slingshot',           group = gA)
+alertInsideDay  = input.bool(false, 'Inside Day',              group = gA)
+alertIdBreakUp  = input.bool(false, 'Inside Day Breakout',     group = gA)
+alertIdBreakDn  = input.bool(false, 'Inside Day Breakdown',    group = gA)
+alertOopsUp     = input.bool(false, 'Oops Reversal',           group = gA)
+alertOopsDn     = input.bool(false, 'Oops Reversal (bear)',    group = gA)
+alertSuperOops  = input.bool(false, 'Super Oops',              group = gA)
+alertOel        = input.bool(false, 'OEL',                     group = gA)
+alertOeh        = input.bool(false, 'OEH',                     group = gA)
+alertAtrOver    = input.bool(false, 'ATR 100%+',               group = gA)
+alertAtrUnder   = input.bool(false, 'ATR < 100%',               group = gA)
+alertKicker     = input.bool(false, 'Kicker',                  group = gA)
+alertB3Up       = input.bool(false, '3-Bar Break Up',          group = gA)
+alertB3Dn       = input.bool(false, '3-Bar Break Down',        group = gA)
+alertEngulf     = input.bool(false, 'Engulf',                  group = gA)
+alertNdayBO     = input.bool(false, 'N-day High Breakout',     group = gA)
+alertVbOld      = input.bool(false, 'VTG Breakout (Old)',      group = gA)
+alertVbNew      = input.bool(false, 'VTG Breakout (New)',      group = gA)
+alertVbBase     = input.bool(false, 'VTG Base (New) qualified',group = gA)
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Engine — KEEP IN SYNC with the "Engine" section of visual_vtgCombo.pine.
+// ═════════════════════════════════════════════════════════════════════════════
+slingEma      = ta.ema(slingEmaSrc == 'High' ? high : close, slingEmaLen)
+slingEmaClose = ta.ema(close, slingEmaLen)
+atr           = ta.atr(atrLen)
+dayMovePct    = close[1] != 0 ? (close - close[1]) / close[1] * 100 : na
+atrMove       = atr != 0 ? math.abs(close - close[1]) / atr : na
+
+f_confUp(float lvl) =>
+    confirmed = (confirmBody ? math.min(open, close) : close) > lvl
+    livePreview and not barstate.isconfirmed ? high > lvl : confirmed
+
+f_confDn(float lvl) =>
+    confirmed = (confirmBody ? math.max(open, close) : close) < lvl
+    livePreview and not barstate.isconfirmed ? low < lvl : confirmed
+
+slingPbVal = slingPbSrc == 'High' ? high : close
+pulledBack = ta.highest(slingPbVal - slingEma, slingBars)[1] < 0
+slingshot  = pulledBack and f_confUp(slingEma)
+
+ema4CloseCross = f_confUp(slingEmaClose) and close[1] <= slingEmaClose[1]
+
+pulledBackClose = ta.highest(slingPbVal - slingEmaClose, slingBars)[1] < 0
+slingshotClose  = pulledBackClose and f_confUp(slingEmaClose)
+
+trendUp  = slingEma > slingEma[preTrendLook]
+preSling = close < slingEma and trendUp and (slingEma - close) <= preNearK * atr and not slingshot
+
+fourPct = not na(dayMovePct) and dayMovePct >= pctThresh and atr < atrMax
+
+insideDay = high < high[1] and low > low[1]
+
+var float idHi   = na
+var float idLo   = na
+var int   idBar  = na
+var bool  idOpen = false
+
+if insideDay
+    idHi   := high
+    idLo   := low
+    idBar  := bar_index
+    idOpen := true
+
+idBarsSince = na(idBar) ? na : bar_index - idBar
+idInWindow  = idOpen and not na(idBarsSince) and idBarsSince >= 1 and idBarsSince <= idBoWindow
+
+idBreakUp = idInWindow and f_confUp(idHi)
+idBreakDn = idInWindow and f_confDn(idLo)
+
+if idBreakUp or idBreakDn or (not na(idBarsSince) and idBarsSince > idBoWindow)
+    idOpen := false
+
+oopsUp = open < low[1]  and f_confUp(low[1])
+oopsDn = open > high[1] and f_confDn(high[1])
+
+tol       = oelTicks * syminfo.mintick
+oelBase   = open <= low + tol
+oelStrong = oelBase and open > close[1] and open > math.max(open[1], close[1]) and open < high[1]
+oel       = oelGapOnly ? oelStrong : oelBase
+oeh       = open >= high - tol
+
+atrOver100  = not na(atrMove) and atrMove >= 1.0
+atrUnder100 = not na(atrMove) and atrMove <  1.0
+
+hi3       = ta.highest(high[1], 3)
+lo3       = ta.lowest(low[1], 3)
+hiNday    = ta.highest(high, boPrice)[1]
+volHiNday = ta.highest(volume, boVol)[1]
+trendSma  = ta.sma(close, boTrend)
+
+superOops = open < low[1] and f_confUp(high[1])
+kicker    = close[1] < open[1] and open > open[1]
+b3Up      = high[1] < high[3] and f_confUp(hi3)
+b3Dn      = low[1]  > low[3]  and f_confDn(lo3)
+engulf    = high > high[1] and low < low[1]
+ndayBO    = f_confUp(hiNday) and (not boUseVol or volume > volHiNday) and (not boUseTrend or close > trendSma)
+
+breakoutEdges = slingshot or fourPct or idBreakUp or oel
+breakoutTrig  = compUnder1Atr ? (breakoutEdges and atrUnder100) : breakoutEdges
+
+// ── VTG Breakout Signal — OLD vs NEW (Voyage "VTG Breakout Signal: Old vs New").
+//    Two independent triggers; enable either or both at once.
+//    OLD: minimal base input — 4/9 EMA compression + tight last candle, then
+//         EMA expansion + range expands vs prior day + rising ATR.
+//    NEW: qualify a 3+ bar base first (pullback toward a rising 21 EMA, tight
+//         closes, ATR decreasing), then a breakout candle over the base high
+//         with a strong close + volume + rising ATR.
+vbEmaF    = ta.ema(close, vbOldFast)
+vbEmaS    = ta.ema(close, vbOldSlow)
+vbSpread  = vbEmaF - vbEmaS
+vbOldBase = math.abs(vbSpread[1]) <= vbOldCompK * atr[1] and (high[1] - low[1]) <= vbOldTightK * atr[1]
+vbOldBO   = vbOldBase and vbSpread > 0 and vbSpread > vbSpread[1]
+             and (high - low) > (high[1] - low[1]) and atr > atr[1]
+             and (not vbOldNeedHi or f_confUp(high[1]))
+
+vbEma21   = ta.ema(close, vbNewEmaLen)
+vbBaseHi  = ta.highest(high, vbBaseLen)
+vbBaseLo  = ta.lowest(low, vbBaseLen)
+vbClsSpan = ta.highest(close, vbBaseLen) - ta.lowest(close, vbBaseLen)
+vbMinCls  = ta.lowest(close - vbEma21, vbBaseLen)   // closes hold the EMA
+vbMinLow  = ta.lowest(low - vbEma21, vbBaseLen)     // lows pulled back toward it
+vbVolAvg  = ta.sma(volume, vbVolLen)
+// Base qualified on the bars ending HERE; the breakout reads the base ending on the prior bar.
+vbBase    = vbClsSpan <= vbTightK * atr and vbMinCls >= -vbUnderK * atr and vbMinLow <= vbNearK * atr
+             and vbEma21 > vbEma21[vbBaseLen] and atr < atr[vbBaseLen]
+vbNewRng  = high - low
+vbNewBO   = vbBase[1] and f_confUp(vbBaseHi[1])
+             and vbNewRng > 0 and (close - low) / vbNewRng >= 1 - vbTopPct / 100
+             and volume >= vbVolMult * vbVolAvg and atr > atr[1]
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Fire — one Discord-ready alert() per checked trigger, all deduped
+// alert.freq_once_per_bar_close (matches the close-confirmed design above).
+// Create ONE TradingView alert on "Any alert() function call" and it will
+// catch whichever of these are checked in "Alerts" above.
+// ═════════════════════════════════════════════════════════════════════════════
+if (alertAll or alertSlingshot) and slingshot
+    alert('{"content":"🟢 VTG Slingshot (4 EMA, High): {{ticker}} ({{interval}}) @ {{close}}"}', alert.freq_once_per_bar_close)
+if (alertAll or alert4EmaCloseX) and ema4CloseCross
+    alert('{"content":"🟢 VTG 4 EMA Close Cross: {{ticker}} ({{interval}}) @ {{close}}"}', alert.freq_once_per_bar_close)
+if (alertAll or alertSlingClose) and slingshotClose
+    alert('{"content":"🟢 VTG Slingshot (4 EMA, Close): {{ticker}} ({{interval}}) @ {{close}}"}', alert.freq_once_per_bar_close)
+if (alertAll or alertBreakout) and breakoutTrig
+    alert('{"content":"🟢 VTG Breakout: {{ticker}} ({{interval}}) @ {{close}}"}', alert.freq_once_per_bar_close)
+if (alertAll or alert4pct) and fourPct
+    alert('{"content":"🟢 VTG 4% Breakout: {{ticker}} ({{interval}}) @ {{close}}"}', alert.freq_once_per_bar_close)
+if (alertAll or alertPreSling) and preSling
+    alert('{"content":"🟡 VTG Pre-Slingshot: {{ticker}} ({{interval}}) @ {{close}}"}', alert.freq_once_per_bar_close)
+if (alertAll or alertInsideDay) and insideDay
+    alert('{"content":"🔵 VTG Inside Day: {{ticker}} ({{interval}}) @ {{close}}"}', alert.freq_once_per_bar_close)
+if (alertAll or alertIdBreakUp) and idBreakUp
+    alert('{"content":"🟢 VTG Inside Day Breakout: {{ticker}} ({{interval}}) @ {{close}}"}', alert.freq_once_per_bar_close)
+if (alertAll or alertIdBreakDn) and idBreakDn
+    alert('{"content":"🔴 VTG Inside Day Breakdown: {{ticker}} ({{interval}}) @ {{close}}"}', alert.freq_once_per_bar_close)
+if (alertAll or alertOopsUp) and oopsUp
+    alert('{"content":"🟢 VTG Oops Reversal: {{ticker}} ({{interval}}) @ {{close}}"}', alert.freq_once_per_bar_close)
+if (alertAll or alertOopsDn) and oopsDn
+    alert('{"content":"🔴 VTG Oops Reversal (bear): {{ticker}} ({{interval}}) @ {{close}}"}', alert.freq_once_per_bar_close)
+if (alertAll or alertSuperOops) and superOops
+    alert('{"content":"🟢 VTG Super Oops: {{ticker}} ({{interval}}) @ {{close}}"}', alert.freq_once_per_bar_close)
+if (alertAll or alertOel) and oel
+    alert('{"content":"🟢 VTG OEL: {{ticker}} ({{interval}}) @ {{close}}"}', alert.freq_once_per_bar_close)
+if (alertAll or alertOeh) and oeh
+    alert('{"content":"🔴 VTG OEH: {{ticker}} ({{interval}}) @ {{close}}"}', alert.freq_once_per_bar_close)
+if (alertAll or alertAtrOver) and atrOver100
+    alert('{"content":"⚠️ VTG ATR 100%+: {{ticker}} ({{interval}}) @ {{close}}"}', alert.freq_once_per_bar_close)
+if (alertAll or alertAtrUnder) and atrUnder100
+    alert('{"content":"VTG ATR < 100%: {{ticker}} ({{interval}}) @ {{close}}"}', alert.freq_once_per_bar_close)
+if (alertAll or alertKicker) and kicker
+    alert('{"content":"🟢 VTG Kicker: {{ticker}} ({{interval}}) @ {{close}}"}', alert.freq_once_per_bar_close)
+if (alertAll or alertB3Up) and b3Up
+    alert('{"content":"🟢 VTG 3-Bar Break Up: {{ticker}} ({{interval}}) @ {{close}}"}', alert.freq_once_per_bar_close)
+if (alertAll or alertB3Dn) and b3Dn
+    alert('{"content":"🔴 VTG 3-Bar Break Down: {{ticker}} ({{interval}}) @ {{close}}"}', alert.freq_once_per_bar_close)
+if (alertAll or alertEngulf) and engulf
+    alert('{"content":"VTG Engulf: {{ticker}} ({{interval}}) @ {{close}}"}', alert.freq_once_per_bar_close)
+if (alertAll or alertNdayBO) and ndayBO
+    alert('{"content":"🟢 VTG N-day High Breakout: {{ticker}} ({{interval}}) @ {{close}}"}', alert.freq_once_per_bar_close)
+if (alertAll or alertVbOld) and vbOldBO
+    alert('{"content":"🟢 VTG Breakout (Old): {{ticker}} ({{interval}}) @ {{close}}"}', alert.freq_once_per_bar_close)
+if (alertAll or alertVbNew) and vbNewBO
+    alert('{"content":"🟢 VTG Breakout (New): {{ticker}} ({{interval}}) @ {{close}}"}', alert.freq_once_per_bar_close)
+if (alertAll or alertVbBase) and vbBase
+    alert('{"content":"🟡 VTG Base (New) qualified: {{ticker}} ({{interval}}) @ {{close}}"}', alert.freq_once_per_bar_close)
