@@ -1,0 +1,182 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © simsisim
+//
+// s-OK Wedge Pop — second phase of Oliver Kell's "Cycle of Price Action".
+//
+// Wedge Pop = after a Reversal Extension the stock coils / wedges BENEATH its
+// 10 (& 21) EMA — range contracting, every close under the fast EMA — then a
+// strong bar POPS back above both EMAs on expanding volume. The first
+// continuation trigger off the bottom.
+//
+// Same ATR-extension engine as s-VTG ATR / s-OK Reversal Extension:
+//   * extension from each MA in ATR units          ->  (close - MA) / ATR
+//   * the wedge = N closes under the 10 MA + range compression vs the prior window
+//   * the pop   = reclaim of the 10 MA (and 21 MA) with a strong close + volume
+//
+// Daily-oriented — use a Daily chart (no request.*, so it is Pine-Screener-safe).
+//
+//@version=6
+indicator('s-OK Wedge Pop', 'OK Wedge Pop', overlay = true, max_labels_count = 500)
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Inputs
+// ═════════════════════════════════════════════════════════════════════════════
+gMA = 'Moving averages & ATR'
+len10    = input.int(10, '10 MA length', minval = 1, group = gMA)
+len21    = input.int(21, '21 MA length', minval = 1, group = gMA)
+len50    = input.int(50, '50 MA length', minval = 1, group = gMA)
+ma10Type = input.string('EMA', '10 MA type', ['EMA', 'SMA'], group = gMA)
+ma21Type = input.string('EMA', '21 MA type', ['EMA', 'SMA'], group = gMA)
+ma50Type = input.string('SMA', '50 MA type', ['EMA', 'SMA'], group = gMA)
+atrLen   = input.int(14, 'ATR length',       minval = 1, group = gMA)
+volLen   = input.int(20, 'Volume MA length', minval = 1, group = gMA)
+
+gW = 'Wedge  (the coil beneath the EMAs)'
+wedgeBars     = input.int(5, 'Wedge length (bars below the 10 MA)', minval = 2, group = gW, tooltip = 'Every one of the last N closes must sit below the 10 MA.')
+reqContract   = input.bool(true,  'Require range contraction', group = gW, tooltip = 'The N-bar high-low range must be tighter than the N bars before it.')
+wedgeContractK= input.float(0.85, 'Contraction ratio (range vs prior window)', minval = 0.1, maxval = 1.0, step = 0.05, group = gW)
+reqTightAbs   = input.bool(false, 'Require the wedge range ≤ K × ATR', group = gW)
+wedgeMaxAtr   = input.float(4.0,  'Max wedge range (× ATR)', minval = 0.5, step = 0.5, group = gW)
+
+gF = 'Prior flush  (link to the Reversal Extension low — optional)'
+reqPriorFlush = input.bool(false, 'Require a recent downside flush', group = gF)
+flushAtr      = input.float(2.0, 'Flush depth below the 10 MA (× ATR)', minval = 0, step = 0.5, group = gF)
+flushWindow   = input.int(15, 'Flush lookback (bars)', minval = 1, group = gF)
+
+gP = 'Pop  (the reclaim)'
+popLookback   = input.int(2, 'Pop within N bars of the wedge', minval = 0, group = gP)
+cooldown      = input.int(3, 'Min bars between signals', minval = 0, group = gP)
+reqReclaim21  = input.bool(true,  'Require close back above the 21 MA too', group = gP)
+reqCross      = input.bool(true,  'Require the actual cross (prior close was below the 10 MA)', group = gP)
+popClosePos   = input.float(0.5, 'Close in top fraction of the bar range', minval = 0, maxval = 1, step = 0.05, group = gP)
+popNeedGreen  = input.bool(true,  'Require green candle (close > open)', group = gP)
+popNeedVol    = input.bool(true,  'Require volume expansion', group = gP)
+volMult       = input.float(1.0, 'Volume > MA ×', minval = 0, step = 0.1, group = gP)
+
+gV = 'Visuals'
+showMAs   = input.bool(true, 'Plot 10 / 21 / 50 MAs',         group = gV)
+showState = input.bool(true, 'Tint background while wedging',  group = gV)
+paintBar  = input.bool(true, 'Paint the pop bar',             group = gV)
+showLabel = input.bool(true, 'Label the pop bar',             group = gV)
+showTable = input.bool(true, 'Show extension table',          group = gV)
+tablePos  = input.string('Bottom Left', 'Table position', ['Top Left', 'Top Right', 'Bottom Left', 'Bottom Right'], group = gV)
+tblBg     = input.color(#8ccf8c,     'Table background', group = gV)
+tblTx     = input.color(color.black, 'Table text',       group = gV)
+
+gC = 'Colour tiers  (extension magnitude in ATR units)'
+tier1 = input.float(1.0, 'Green below (ATR)',  minval = 0, group = gC)
+tier2 = input.float(2.0, 'Yellow below (ATR)', minval = 0, group = gC)
+colG  = input.color(#66bb6a, 'Green',  group = gC, inline = 'c')
+colY  = input.color(#f9a825, 'Yellow', group = gC, inline = 'c')
+colR  = input.color(#ef5350, 'Red',    group = gC, inline = 'c')
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Engine
+// ═════════════════════════════════════════════════════════════════════════════
+get_ma(float src, simple int l, simple string t) => t == 'EMA' ? ta.ema(src, l) : ta.sma(src, l)
+ma10  = get_ma(close, len10, ma10Type)
+ma21  = get_ma(close, len21, ma21Type)
+ma50  = get_ma(close, len50, ma50Type)
+atr   = ta.atr(atrLen)
+volMa = ta.sma(volume, volLen)
+
+ok(float x) => not na(x) and x != 0
+distATR(float m) => ok(atr) and not na(m) ? (close - m) / atr : na
+d10 = distATR(ma10)
+d21 = distATR(ma21)
+d50 = distATR(ma50)
+
+// ── Wedge ───────────────────────────────────────────────────────────────────
+// every one of the last `wedgeBars` closes below the 10 MA (same trick as the
+// VTG Combo slingshot pullback): highest(close-ma10, N)[1] < 0
+pulledUnder = ta.highest(close - ma10, wedgeBars)[1] < 0
+
+winRange   = ta.highest(high, wedgeBars) - ta.lowest(low, wedgeBars)
+priorRange = winRange[wedgeBars]
+contracted = not na(priorRange) and priorRange != 0 ? winRange <= priorRange * wedgeContractK : false
+tightAbs   = ok(atr) ? winRange / atr <= wedgeMaxAtr : false
+wedgeRngAtr = ok(atr) ? winRange / atr : na
+
+wedging = pulledUnder and (not reqContract or contracted) and (not reqTightAbs or tightAbs)
+
+// ── Prior flush (optional link to the reversal-extension low) ────────────────
+deepExt    = ok(atr) and not na(ma10) ? (ma10 - close) / atr >= flushAtr : false
+bsFlush    = ta.barssince(deepExt)
+priorFlush = not na(bsFlush) and bsFlush <= flushWindow
+
+// ── Pop ─────────────────────────────────────────────────────────────────────
+rngPos = high != low ? (close - low) / (high - low) : 0.5
+bsWedge = ta.barssince(wedging)
+
+popBar =     close > ma10
+         and (not reqReclaim21 or close > ma21)
+         and (not popNeedGreen or close > open)
+         and rngPos >= popClosePos
+         and (not popNeedVol   or volume > volMa * volMult)
+         and (not reqCross     or close[1] <= ma10[1])
+
+sigRaw = (not na(bsWedge) and bsWedge <= popLookback) and popBar and (not reqPriorFlush or priorFlush)
+
+var int barsSinceSig = na
+ready    = na(barsSinceSig) or barsSinceSig >= cooldown
+wedgePop = sigRaw and ready
+barsSinceSig := wedgePop ? 0 : na(barsSinceSig) ? na : barsSinceSig + 1
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Visuals
+// ═════════════════════════════════════════════════════════════════════════════
+plot(showMAs ? ma10 : na, '10 MA', color = color.new(color.blue,   0), linewidth = 2)
+plot(showMAs ? ma21 : na, '21 MA', color = color.new(color.orange, 0), linewidth = 1)
+plot(showMAs ? ma50 : na, '50 MA', color = color.new(color.red,    0), linewidth = 1)
+
+bgcolor(showState and wedging ? color.new(colY, 88) : na, title = 'Wedging')
+barcolor(paintBar and wedgePop ? colG : na,               title = 'Wedge Pop bar')
+
+plotshape(showLabel and wedgePop, 'Wedge Pop', style = shape.triangleup, location = location.belowbar, color = colG, size = size.small, text = 'Wedge Pop', textcolor = color.black)
+
+// ── Extension table ─────────────────────────────────────────────────────────
+posConst = switch tablePos
+    'Top Left'     => position.top_left
+    'Top Right'    => position.top_right
+    'Bottom Left'  => position.bottom_left
+    'Bottom Right' => position.bottom_right
+    => position.bottom_left
+
+tier(float v) => na(v) ? tblBg : math.abs(v) < tier1 ? colG : math.abs(v) < tier2 ? colY : colR
+eStr(float v) => na(v) ? '—' : str.tostring(v, '0.00') + ' ATR'
+
+var table t = table.new(posConst, 2, 8, frame_color = color.new(color.black, 55), frame_width = 1, border_color = color.new(color.black, 80), border_width = 1)
+
+f_row(int r, string k, string v, color bg) =>
+    table.cell(t, 0, r, k + '  ', text_color = tblTx, text_size = size.small, text_halign = text.align_left, bgcolor = bg)
+    table.cell(t, 1, r, v,        text_color = tblTx, text_size = size.small, text_halign = text.align_left, bgcolor = bg)
+    r + 1
+
+if barstate.islast and showTable and timeframe.period != '1M'
+    table.clear(t, 0, 0, 1, 7)
+    int r = 0
+    r := f_row(r, str.tostring(len10) + ' ' + ma10Type, eStr(d10), tier(d10))
+    r := f_row(r, str.tostring(len21) + ' ' + ma21Type, eStr(d21), tier(d21))
+    r := f_row(r, str.tostring(len50) + ' ' + ma50Type, eStr(d50), tier(d50))
+    r := f_row(r, 'Wedge range (' + str.tostring(wedgeBars) + 'b)', eStr(wedgeRngAtr), tier(wedgeRngAtr))
+    r := f_row(r, 'Wedging', wedging ? 'YES' : 'no', wedging ? colY : tblBg)
+    r := f_row(r, 'Wedge Pop', wedgePop ? 'TRIGGERED' : (not na(bsWedge) and bsWedge <= popLookback) ? 'armed' : 'no', wedgePop ? colG : (not na(bsWedge) and bsWedge <= popLookback) ? colY : tblBg)
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Screener + alerts
+// ═════════════════════════════════════════════════════════════════════════════
+dayChgPct  = close[1] != 0 ? (close - close[1]) / close[1] * 100 : na
+volRatio   = ok(volMa) ? volume / volMa : na
+dollarVolM = close * volume / 1e6
+
+alertcondition(wedgePop, 'Wedge Pop', 'OK: Wedge Pop {{ticker}}')
+alertcondition(wedging,  'Wedging',   'OK: Wedging {{ticker}}')
+
+plot(wedgePop ? 1 : 0, 'Screener Trigger',    display = display.none, editable = false)
+plot(d10,        'Ext 10 (ATR)',     display = display.none, editable = false)
+plot(d21,        'Ext 21 (ATR)',     display = display.none, editable = false)
+plot(d50,        'Ext 50 (ATR)',     display = display.none, editable = false)
+plot(wedgeRngAtr,'Wedge range (ATR)', display = display.none, editable = false)
+plot(volRatio,   'Vol / MA',         display = display.none, editable = false)
+plot(dayChgPct,  'Chg 1D %',         display = display.none, editable = false)
+plot(dollarVolM, '$ Vol (M)',        display = display.none, editable = false)

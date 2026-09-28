@@ -1,0 +1,303 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © simsisim
+//
+// s-OK Cycle — the long side of Oliver Kell's "Cycle of Price Action" in ONE
+// indicator + Pine Screener source.
+//
+//   1. Reversal Extension  — stretched far BELOW the 10/21 EMA, then a reversal bar.        (bottom)
+//   2. Wedge Pop           — coils BENEATH the EMAs, then POPS back above on volume.        (first continuation)
+//   3. EMA Crossback       — uptrend intact, shallow dip to the 10 EMA, then reclaims it.   (secondary entry)
+//
+// Shared engine (same as s-VTG ATR): extension from every MA is measured in ATR
+// units -> (close - MA) / ATR, and each setup is a threshold on that plus a
+// price-structure trigger.
+//
+// Like s-VTG Combo:
+//   * one "Show *" switch per setup
+//   * per-setup colour, used for BOTH the painted bar and the label background
+//   * "Show trigger labels" + "Labels only on current bar"
+//   * "Paint the trigger bar"
+//   * every trigger is an alertcondition() -> True/False Pine Screener column;
+//     metrics are plot(..., display.none) numeric columns. No request.* -> screener-safe.
+//
+// Daily-oriented — use a Daily chart.
+//
+//@version=6
+indicator('s-OK Cycle', 'OK Cycle', overlay = true, max_labels_count = 500)
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Inputs
+// ═════════════════════════════════════════════════════════════════════════════
+gShow = 'Setups'
+showRevExt    = input.bool(true, 'Show Reversal Extension', group = gShow)
+showWedgePop  = input.bool(true, 'Show Wedge Pop',          group = gShow)
+showCrossback = input.bool(true, 'Show EMA Crossback',      group = gShow)
+
+gDisp = 'Display'
+showLabels        = input.bool(true,  'Show trigger labels (text tag on the bar)', group = gDisp)
+labelsCurrentOnly = input.bool(false, 'Labels only on current bar',                group = gDisp)
+paintBars         = input.bool(true,  'Paint the trigger bar',                     group = gDisp)
+labelTextAuto     = input.bool(true,  'Label text auto black/white for contrast',  group = gDisp)
+labelGap          = input.float(0.5,  'Label stack spacing (× ATR)', minval = 0.05, group = gDisp)
+showMAs           = input.bool(true,  'Plot 10 / 21 / 50 MAs',                     group = gDisp)
+showZones         = input.bool(true,  'Tint background by active state',           group = gDisp)
+
+gMA = 'Moving averages & ATR'
+len10    = input.int(10, '10 MA length', minval = 1, group = gMA)
+len21    = input.int(21, '21 MA length', minval = 1, group = gMA)
+len50    = input.int(50, '50 MA length', minval = 1, group = gMA)
+ma10Type = input.string('EMA', '10 MA type', ['EMA', 'SMA'], group = gMA)
+ma21Type = input.string('EMA', '21 MA type', ['EMA', 'SMA'], group = gMA)
+ma50Type = input.string('SMA', '50 MA type', ['EMA', 'SMA'], group = gMA)
+atrLen   = input.int(14, 'ATR length',       minval = 1, group = gMA)
+volLen   = input.int(20, 'Volume MA length', minval = 1, group = gMA)
+
+gQ = 'Reversal / pop bar quality  (shared)'
+strongClosePos = input.float(0.5, 'Close in top fraction of the bar range', minval = 0, maxval = 1, step = 0.05, group = gQ)
+needGreen      = input.bool(true, 'Require green candle (close > open)', group = gQ)
+needVol        = input.bool(true, 'Require volume > volume MA',          group = gQ)
+volMult        = input.float(1.0, 'Volume > MA ×', minval = 0, step = 0.1, group = gQ)
+confirmBody    = input.bool(false, 'Reclaim needs the whole body above the MA (else the close)', group = gQ)
+cooldown       = input.int(3, 'Min bars between signals (per setup)', minval = 0, group = gQ)
+
+gRE = 'Reversal Extension'
+extAtr     = input.float(1.0, 'Min distance below the 10 MA (× ATR)', minval = 0, step = 0.1, group = gRE, tooltip = 'Kell flushes are often 2–4 ATR; 1.0 is a loose floor. Lower if you see nothing.')
+extUseHigh = input.bool(false, 'Measure from the bar HIGH, not the close', group = gRE)
+reqBelow21 = input.bool(true,  'Also require price below the 21 MA', group = gRE)
+reqBelow50 = input.bool(false, 'Also require price below the 50 MA', group = gRE)
+reLookback = input.int(5, 'Extension lookback (bars)', minval = 1, group = gRE)
+reUpDay    = input.bool(true, 'Require close > prior close', group = gRE)
+reUndercut = input.bool(true, 'Require undercut of the recent low (URL)', group = gRE)
+reStillLow = input.bool(true, 'Require price still below the 10 MA', group = gRE)
+
+gWP = 'Wedge Pop'
+wedgeBars      = input.int(5, 'Wedge length (bars below the 10 MA)', minval = 2, group = gWP)
+wpContract     = input.bool(true, 'Require range contraction', group = gWP)
+wpContractK    = input.float(0.85, 'Contraction ratio (range vs prior window)', minval = 0.1, maxval = 1.0, step = 0.05, group = gWP)
+wpReclaim21    = input.bool(true, 'Require close back above the 21 MA too', group = gWP)
+wpReqCross     = input.bool(true, 'Require the actual cross (prior close below the 10 MA)', group = gWP)
+wpPopLookback  = input.int(2, 'Pop within N bars of the wedge', minval = 0, group = gWP)
+wpPriorFlush   = input.bool(false, 'Require a recent downside flush', group = gWP)
+wpFlushAtr     = input.float(2.0, 'Flush depth below the 10 MA (× ATR)', minval = 0, step = 0.5, group = gWP)
+wpFlushWindow  = input.int(15, 'Flush lookback (bars)', minval = 1, group = gWP)
+
+gCB = 'EMA Crossback'
+cbTrendLook  = input.int(10, 'Trend lookback (21 MA rising over N bars)', minval = 1, group = gCB)
+cbReqStack50 = input.bool(true,  'Require 21 MA above the 50 MA', group = gCB)
+cbPbBars     = input.int(5, 'Pullback window (bars)', minval = 1, group = gCB)
+cbShallowK   = input.float(0.5, 'Dip may close at most K × ATR below the 21 MA', minval = 0, step = 0.1, group = gCB)
+cbMaxFlushAtr= input.float(1.5, 'Dip low at most K × ATR below the 10 MA', minval = 0, step = 0.1, group = gCB)
+cbReqCross   = input.bool(true,  'Require the actual cross of the 10 MA', group = gCB)
+cbPopLookback= input.int(2, 'Reclaim within N bars of the dip', minval = 0, group = gCB)
+
+gTbl = 'Extension table'
+showTable = input.bool(true, 'Show extension table', group = gTbl)
+tablePos  = input.string('Bottom Left', 'Table position', ['Top Left', 'Top Right', 'Bottom Left', 'Bottom Right'], group = gTbl)
+tblBg     = input.color(#8ccf8c,     'Table background', group = gTbl)
+tblTx     = input.color(color.black, 'Table text',       group = gTbl)
+tier1     = input.float(1.0, 'Green below (ATR)',  minval = 0, group = gTbl)
+tier2     = input.float(2.0, 'Yellow below (ATR)', minval = 0, group = gTbl)
+colTierG  = input.color(#66bb6a, 'Green',  group = gTbl, inline = 'c')
+colTierY  = input.color(#f9a825, 'Yellow', group = gTbl, inline = 'c')
+colTierR  = input.color(#ef5350, 'Red',    group = gTbl, inline = 'c')
+
+gCol = 'Trigger colours  (painted bar + label background)'
+colRE = input.color(#26a69a, 'Reversal Extension', group = gCol)
+colWP = input.color(#00897b, 'Wedge Pop',          group = gCol)
+colCB = input.color(#3d5afe, 'EMA Crossback',      group = gCol)
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Engine
+// ═════════════════════════════════════════════════════════════════════════════
+get_ma(float src, simple int l, simple string t) => t == 'EMA' ? ta.ema(src, l) : ta.sma(src, l)
+ma10  = get_ma(close, len10, ma10Type)
+ma21  = get_ma(close, len21, ma21Type)
+ma50  = get_ma(close, len50, ma50Type)
+atr   = ta.atr(atrLen)
+volMa = ta.sma(volume, volLen)
+
+ok(float x) => not na(x) and x != 0
+distATR(float m) => ok(atr) and not na(m) ? (close - m) / atr : na
+d10 = distATR(ma10)
+d21 = distATR(ma21)
+d50 = distATR(ma50)
+
+rngPos    = high != low ? (close - low) / (high - low) : 0.5
+volOK     = not needVol or (ok(volMa) and volume > volMa * volMult)
+greenOK   = not needGreen or close > open
+strongOK  = rngPos >= strongClosePos
+reclaim(float lvl) => (confirmBody ? math.min(open, close) : close) > lvl
+
+// ── 1. Reversal Extension ───────────────────────────────────────────────────
+refPx        = extUseHigh ? high : close
+below10      = ok(atr) and not na(ma10) ? (ma10 - refPx) / atr : na
+extendedDown = not na(below10) and below10 >= extAtr and (not reqBelow21 or close < ma21) and (not reqBelow50 or close < ma50)
+bsExt        = ta.barssince(extendedDown)
+wasExtended  = not na(bsExt) and bsExt <= reLookback
+flushDepth   = ta.lowest(d10, reLookback + 1)
+reLookLow    = ta.lowest(low, reLookback)[1]
+
+reBar =      greenOK and strongOK and volOK
+         and (not reUpDay    or close > close[1])
+         and (not reUndercut or low <= reLookLow)
+         and (not reStillLow or close < ma10)
+reRaw = wasExtended and reBar
+
+// ── 2. Wedge Pop ────────────────────────────────────────────────────────────
+pulledUnder = ta.highest(close - ma10, wedgeBars)[1] < 0
+winRange    = ta.highest(high, wedgeBars) - ta.lowest(low, wedgeBars)
+priorRange  = winRange[wedgeBars]
+contracted  = not na(priorRange) and priorRange != 0 ? winRange <= priorRange * wpContractK : false
+wedgeRngAtr = ok(atr) ? winRange / atr : na
+wedging     = pulledUnder and (not wpContract or contracted)
+bsWedge     = ta.barssince(wedging)
+
+wpDeepExt   = ok(atr) and not na(ma10) ? (ma10 - close) / atr >= wpFlushAtr : false
+wpBsFlush   = ta.barssince(wpDeepExt)
+wpFlushOK   = not wpPriorFlush or (not na(wpBsFlush) and wpBsFlush <= wpFlushWindow)
+
+wpPopBar =   reclaim(ma10) and greenOK and strongOK and volOK
+         and (not wpReclaim21 or reclaim(ma21))
+         and (not wpReqCross  or close[1] <= ma10[1])
+wpRaw = (not na(bsWedge) and bsWedge <= wpPopLookback) and wpPopBar and wpFlushOK
+
+// ── 3. EMA Crossback ────────────────────────────────────────────────────────
+trendUp   = ma10 > ma21 and (not cbReqStack50 or ma21 > ma50) and ma21 > ma21[cbTrendLook]
+dipTagged = ta.lowest(low - ma10, cbPbBars)[1] <= 0                              // low reached the 10 MA
+heldAbove = ok(atr) ? ta.lowest(close - ma21, cbPbBars)[1] >= -cbShallowK * atr : false
+dipShallow= ok(atr) and not na(ma10) ? (ma10 - ta.lowest(low, cbPbBars)) / atr <= cbMaxFlushAtr : false
+cbCrossBar=  reclaim(ma10) and greenOK and strongOK and volOK
+         and (not cbReqCross or close[1] <= ma10[1])
+cbArmed   = trendUp and dipTagged and heldAbove and dipShallow and not extendedDown
+bsCbArm   = ta.barssince(cbArmed)
+cbRaw     = (not na(bsCbArm) and bsCbArm <= cbPopLookback) and cbCrossBar
+
+// ── Per-setup cooldown ──────────────────────────────────────────────────────
+// One call site per setup -> each keeps its own persistent `since` counter.
+f_gate(bool raw) =>
+    var int since = na
+    ready = na(since) or since >= cooldown
+    fired = raw and ready
+    since := fired ? 0 : na(since) ? na : since + 1
+    fired
+
+reFired = f_gate(reRaw)          // ungated by the Show switches (screener needs it)
+wpFired = f_gate(wpRaw)
+cbFired = f_gate(cbRaw)
+
+revExt       = showRevExt    and reFired
+wedgePop     = showWedgePop  and wpFired
+emaCrossback = showCrossback and cbFired
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Visuals
+// ═════════════════════════════════════════════════════════════════════════════
+plot(showMAs ? ma10 : na, '10 MA', color = color.new(color.blue,   0), linewidth = 2)
+plot(showMAs ? ma21 : na, '21 MA', color = color.new(color.orange, 0), linewidth = 1)
+plot(showMAs ? ma50 : na, '50 MA', color = color.new(color.red,    0), linewidth = 1)
+
+zoneCol = showRevExt   and extendedDown ? color.new(colTierR, 90) :
+          showWedgePop  and wedging      ? color.new(colTierY, 88) :
+          showCrossback and cbArmed      ? color.new(colCB,    92) : na
+bgcolor(showZones ? zoneCol : na, title = 'Active state')
+
+// single painted bar — highest-priority firing setup
+sigCol = revExt ? colRE : wedgePop ? colWP : emaCrossback ? colCB : na
+barcolor(paintBars ? sigCol : na, title = 'Trigger bar')
+
+// stacked labels, each in its own setup colour
+labelOK = showLabels and (not labelsCurrentOnly or barstate.islast)
+gapY    = nz(atr, close * 0.02) * labelGap
+
+f_txt(color bg) =>
+    lum = 0.299 * color.r(bg) + 0.587 * color.g(bg) + 0.114 * color.b(bg)
+    labelTextAuto ? (lum > 150 ? color.black : color.white) : color.white
+
+f_tag(int slot, bool cond, string txt, color c) =>
+    s = slot
+    if cond and labelOK
+        label.new(bar_index, high + gapY + slot * gapY, txt, yloc = yloc.price, style = label.style_label_down, color = color.new(c, 0), textcolor = f_txt(c), size = size.small)
+        s := slot + 1
+    s
+
+slot = 0
+slot := f_tag(slot, revExt,       'Reversal Ext', colRE)
+slot := f_tag(slot, wedgePop,     'Wedge Pop',    colWP)
+slot := f_tag(slot, emaCrossback, 'Crossback',    colCB)
+
+// ── Extension table ─────────────────────────────────────────────────────────
+posConst = switch tablePos
+    'Top Left'     => position.top_left
+    'Top Right'    => position.top_right
+    'Bottom Left'  => position.bottom_left
+    'Bottom Right' => position.bottom_right
+    => position.bottom_left
+
+tier(float v) => na(v) ? tblBg : math.abs(v) < tier1 ? colTierG : math.abs(v) < tier2 ? colTierY : colTierR
+eStr(float v) => na(v) ? '—' : str.tostring(v, '0.00') + ' ATR'
+
+stateStr = extendedDown ? 'Extended down' : wedging ? 'Wedging' : cbArmed ? 'Uptrend dip' : '—'
+stateCol = extendedDown ? colTierR : wedging ? colTierY : cbArmed ? color.new(colCB, 40) : tblBg
+
+var string lastSig = na
+var int    lastBar = na
+if emaCrossback
+    lastSig := 'Crossback'
+    lastBar := bar_index
+if wedgePop
+    lastSig := 'Wedge Pop'
+    lastBar := bar_index
+if revExt
+    lastSig := 'Reversal Ext'
+    lastBar := bar_index
+lastStr = na(lastSig) ? '—' : lastSig + ' (' + str.tostring(bar_index - lastBar) + 'b ago)'
+
+var table t = table.new(posConst, 2, 8, frame_color = color.new(color.black, 55), frame_width = 1, border_color = color.new(color.black, 80), border_width = 1)
+
+f_row(int r, string k, string v, color bg) =>
+    table.cell(t, 0, r, k + '  ', text_color = tblTx, text_size = size.small, text_halign = text.align_left, bgcolor = bg)
+    table.cell(t, 1, r, v,        text_color = tblTx, text_size = size.small, text_halign = text.align_left, bgcolor = bg)
+    r + 1
+
+if barstate.islast and showTable and timeframe.period != '1M'
+    table.clear(t, 0, 0, 1, 7)
+    int r = 0
+    r := f_row(r, str.tostring(len10) + ' ' + ma10Type, eStr(d10), tier(d10))
+    r := f_row(r, str.tostring(len21) + ' ' + ma21Type, eStr(d21), tier(d21))
+    r := f_row(r, str.tostring(len50) + ' ' + ma50Type, eStr(d50), tier(d50))
+    r := f_row(r, 'Flush depth (' + str.tostring(reLookback) + 'b)', eStr(flushDepth), tier(flushDepth))
+    r := f_row(r, 'Wedge range (' + str.tostring(wedgeBars) + 'b)', eStr(wedgeRngAtr), tier(wedgeRngAtr))
+    r := f_row(r, 'State', stateStr, stateCol)
+    r := f_row(r, 'Last signal', lastStr, tblBg)
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Screener + alerts
+//   alertcondition() -> True/False filter column · plot(display.none) -> numeric column
+//   Not gated by the "Show *" switches — every column is always available.
+// ═════════════════════════════════════════════════════════════════════════════
+dayChgPct  = close[1] != 0 ? (close - close[1]) / close[1] * 100 : na
+atrMove    = ok(atr) ? math.abs(close - close[1]) / atr : na
+volRatio   = ok(volMa) ? volume / volMa : na
+dollarVolM = close * volume / 1e6
+anyTrig    = reFired or wpFired or cbFired
+
+alertcondition(reFired,      'Reversal Extension', 'OK: Reversal Extension {{ticker}}')
+alertcondition(wpFired,      'Wedge Pop',          'OK: Wedge Pop {{ticker}}')
+alertcondition(cbFired,      'EMA Crossback',      'OK: EMA Crossback {{ticker}}')
+alertcondition(extendedDown, 'Downside Extended',  'OK: Downside Extended {{ticker}}')
+alertcondition(wedging,      'Wedging',            'OK: Wedging {{ticker}}')
+alertcondition(cbArmed,      'Uptrend Dip',        'OK: Uptrend Dip {{ticker}}')
+
+plot(anyTrig ? 1 : 0, 'Screener Trigger (any)', display = display.none, editable = false)
+plot(reFired ? 1 : 0, 'Reversal Ext 1/0',       display = display.none, editable = false)
+plot(wpFired ? 1 : 0, 'Wedge Pop 1/0',          display = display.none, editable = false)
+plot(cbFired ? 1 : 0, 'Crossback 1/0',          display = display.none, editable = false)
+plot(d10,        'Ext 10 (ATR)',      display = display.none, editable = false)
+plot(d21,        'Ext 21 (ATR)',      display = display.none, editable = false)
+plot(d50,        'Ext 50 (ATR)',      display = display.none, editable = false)
+plot(flushDepth, 'Flush depth (ATR)', display = display.none, editable = false)
+plot(wedgeRngAtr,'Wedge range (ATR)', display = display.none, editable = false)
+plot(atrMove,    'Move / ATR',        display = display.none, editable = false)
+plot(volRatio,   'Vol / MA',          display = display.none, editable = false)
+plot(dayChgPct,  'Chg 1D %',          display = display.none, editable = false)
+plot(dollarVolM, '$ Vol (M)',         display = display.none, editable = false)

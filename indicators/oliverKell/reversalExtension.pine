@@ -1,0 +1,180 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © simsisim
+//
+// s-OK Reversal Extension — first phase of Oliver Kell's "Cycle of Price Action".
+//
+// Reversal Extension = a stock has sold off in fear and is now stretched FAR
+// BELOW its moving averages (10 / 21 EMA, sometimes the 50), then prints a
+// reversal bar (strong green close, often an undercut-and-rally on heavy volume).
+// It flags a potential bottom / the end of the downtrend.
+//
+// Built on the same ATR-extension engine as s-VTG ATR:
+//   * extension from each MA is measured in ATR units  ->  (close - MA) / ATR
+//   * the "extended-down" state is a distance-below-MA threshold in ATR
+//   * 3-tier green / yellow / red colouring
+//
+// Why the naive version shows nothing: it AND-s "extended" with "reversal bar"
+// on the SAME bar. A real reversal bar rallies back toward the MA, so by its
+// close it is usually no longer "extended". Here the extension only has to have
+// occurred WITHIN `lookback` bars before (or on) the reversal bar.
+//
+// Daily-oriented — use a Daily chart (also keeps it Pine-Screener-safe: no request.*).
+//
+//@version=6
+indicator('s-OK Reversal Extension', 'OK Rev Ext', overlay = true, max_labels_count = 500)
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Inputs
+// ═════════════════════════════════════════════════════════════════════════════
+gMA = 'Moving averages & ATR'
+len10    = input.int(10, '10 MA length', minval = 1, group = gMA)
+len21    = input.int(21, '21 MA length', minval = 1, group = gMA)
+len50    = input.int(50, '50 MA length', minval = 1, group = gMA)
+ma10Type = input.string('EMA', '10 MA type', ['EMA', 'SMA'], group = gMA)
+ma21Type = input.string('EMA', '21 MA type', ['EMA', 'SMA'], group = gMA)
+ma50Type = input.string('SMA', '50 MA type', ['EMA', 'SMA'], group = gMA)
+atrLen   = input.int(14, 'ATR length',        minval = 1, group = gMA)
+volLen   = input.int(20, 'Volume MA length',  minval = 1, group = gMA)
+
+gE = 'Downside extension  (the "stretched below the MAs" state)'
+extAtr     = input.float(1.0, 'Min distance below the 10 MA (× ATR)', minval = 0, step = 0.1, group = gE, tooltip = 'How far below the 10 MA price must sit to count as extended. Kell flushes are often 2–4 ATR; 1.0 is a loose floor. Lower this if you see nothing.')
+extUseHigh = input.bool(false, 'Measure from the bar HIGH, not the close', group = gE, tooltip = 'OFF: close is ≥ N×ATR below the 10 MA.  ON (strict Kell): even the bar HIGH is ≥ N×ATR below it.')
+reqBelow21 = input.bool(true,  'Also require price below the 21 MA', group = gE)
+reqBelow50 = input.bool(false, 'Also require price below the 50 MA', group = gE)
+
+gR = 'Reversal bar'
+lookback      = input.int(5, 'Extension lookback (bars)', minval = 1, group = gR, tooltip = 'The extended-down state must have occurred within this many bars before (or on) the reversal bar.')
+cooldown      = input.int(3, 'Min bars between signals', minval = 0, group = gR)
+revClosePos   = input.float(0.5, 'Close in top fraction of the bar range', minval = 0, maxval = 1, step = 0.05, group = gR)
+revNeedGreen  = input.bool(true, 'Require green candle (close > open)',  group = gR)
+revNeedUpDay  = input.bool(true, 'Require close > prior close',          group = gR)
+revNeedVol    = input.bool(true, 'Require volume > volume MA',           group = gR)
+revUndercut   = input.bool(true, 'Require undercut of the recent low (URL)', group = gR, tooltip = 'Today prints a fresh low vs the lookback window (the fear flush), then reverses up.')
+revStillBelow = input.bool(true, 'Require price still below the 10 MA',  group = gR, tooltip = 'Keeps this a first-bounce-off-the-low signal, not a wedge pop already back above the MAs.')
+
+gV = 'Visuals'
+showMAs   = input.bool(true, 'Plot 10 / 21 / 50 MAs',        group = gV)
+showState = input.bool(true, 'Tint background while extended-down', group = gV)
+paintBar  = input.bool(true, 'Paint the reversal bar',       group = gV)
+showLabel = input.bool(true, 'Label the reversal bar',       group = gV)
+showTable = input.bool(true, 'Show extension table',         group = gV)
+tablePos  = input.string('Bottom Left', 'Table position', ['Top Left', 'Top Right', 'Bottom Left', 'Bottom Right'], group = gV)
+tblBg     = input.color(#8ccf8c,      'Table background', group = gV)
+tblTx     = input.color(color.black,  'Table text',       group = gV)
+
+gC = 'Colour tiers  (extension magnitude in ATR units)'
+tier1 = input.float(1.0, 'Green below (ATR)',  minval = 0, group = gC)
+tier2 = input.float(2.0, 'Yellow below (ATR)', minval = 0, group = gC)
+colG  = input.color(#66bb6a, 'Green',  group = gC, inline = 'c')
+colY  = input.color(#f9a825, 'Yellow', group = gC, inline = 'c')
+colR  = input.color(#ef5350, 'Red',    group = gC, inline = 'c')
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Engine
+// ═════════════════════════════════════════════════════════════════════════════
+get_ma(float src, simple int l, simple string t) => t == 'EMA' ? ta.ema(src, l) : ta.sma(src, l)
+ma10  = get_ma(close, len10, ma10Type)
+ma21  = get_ma(close, len21, ma21Type)
+ma50  = get_ma(close, len50, ma50Type)
+atr   = ta.atr(atrLen)
+volMa = ta.sma(volume, volLen)
+
+ok(float x) => not na(x) and x != 0
+
+// Extension from each MA, in ATR units. Negative = price BELOW the MA (downside).
+distATR(float m) => ok(atr) and not na(m) ? (close - m) / atr : na
+d10 = distATR(ma10)
+d21 = distATR(ma21)
+d50 = distATR(ma50)
+
+// How far the reference point (close, or high) sits BELOW the 10 MA, in ATR.
+refPx   = extUseHigh ? high : close
+below10 = ok(atr) and not na(ma10) ? (ma10 - refPx) / atr : na
+
+extendedDown = not na(below10) and below10 >= extAtr and (not reqBelow21 or close < ma21) and (not reqBelow50 or close < ma50)
+
+// Was the stock extended-down within the last `lookback` bars (this bar included)?
+bsExt       = ta.barssince(extendedDown)
+wasExtended = not na(bsExt) and bsExt <= lookback
+
+// Deepest push below the 10 MA over the window (most negative d10).
+extDepth = ta.lowest(d10, lookback + 1)
+
+// ── Reversal bar ────────────────────────────────────────────────────────────
+rngPos  = high != low ? (close - low) / (high - low) : 0.5
+lookLow = ta.lowest(low, lookback)[1]        // lowest low of the window BEFORE today
+
+revBar =     (not revNeedGreen  or close > open)
+         and (not revNeedUpDay  or close > close[1])
+         and rngPos >= revClosePos
+         and (not revNeedVol    or volume > volMa)
+         and (not revUndercut   or low <= lookLow)
+         and (not revStillBelow or close < ma10)
+
+// Fire on the first qualifying bar, then stay quiet for `cooldown` bars.
+sigRaw = wasExtended and revBar
+var int barsSinceSig = na
+ready  = na(barsSinceSig) or barsSinceSig >= cooldown
+reversalExt = sigRaw and ready
+barsSinceSig := reversalExt ? 0 : na(barsSinceSig) ? na : barsSinceSig + 1
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Visuals
+// ═════════════════════════════════════════════════════════════════════════════
+plot(showMAs ? ma10 : na, '10 MA', color = color.new(color.blue,   0), linewidth = 2)
+plot(showMAs ? ma21 : na, '21 MA', color = color.new(color.orange, 0), linewidth = 1)
+plot(showMAs ? ma50 : na, '50 MA', color = color.new(color.red,    0), linewidth = 1)
+
+bgcolor(showState and extendedDown ? color.new(colR, 90) : na, title = 'Extended down')
+barcolor(paintBar and reversalExt  ? colG : na,                title = 'Reversal Extension bar')
+
+plotshape(showLabel and reversalExt, 'Reversal Extension', style = shape.triangleup, location = location.belowbar, color = colG, size = size.small, text = 'Rev Ext', textcolor = color.black)
+
+// ── Extension table ─────────────────────────────────────────────────────────
+posConst = switch tablePos
+    'Top Left'     => position.top_left
+    'Top Right'    => position.top_right
+    'Bottom Left'  => position.bottom_left
+    'Bottom Right' => position.bottom_right
+    => position.bottom_left
+
+tier(float v)  => na(v) ? tblBg : math.abs(v) < tier1 ? colG : math.abs(v) < tier2 ? colY : colR
+eStr(float v)  => na(v) ? '—' : str.tostring(v, '0.00') + ' ATR'
+
+var table t = table.new(posConst, 2, 8, frame_color = color.new(color.black, 55), frame_width = 1, border_color = color.new(color.black, 80), border_width = 1)
+
+f_row(int r, string k, string v, color bg) =>
+    table.cell(t, 0, r, k + '  ', text_color = tblTx, text_size = size.small, text_halign = text.align_left, bgcolor = bg)
+    table.cell(t, 1, r, v,        text_color = tblTx, text_size = size.small, text_halign = text.align_left, bgcolor = bg)
+    r + 1
+
+if barstate.islast and showTable and timeframe.period != '1M'
+    table.clear(t, 0, 0, 1, 7)
+    int r = 0
+    r := f_row(r, str.tostring(len10) + ' ' + ma10Type, eStr(d10), tier(d10))
+    r := f_row(r, str.tostring(len21) + ' ' + ma21Type, eStr(d21), tier(d21))
+    r := f_row(r, str.tostring(len50) + ' ' + ma50Type, eStr(d50), tier(d50))
+    r := f_row(r, 'Flush depth (' + str.tostring(lookback) + 'b)', eStr(extDepth), tier(extDepth))
+    r := f_row(r, 'Extended down', extendedDown ? 'YES' : 'no', extendedDown ? colR : tblBg)
+    r := f_row(r, 'Reversal Ext',  reversalExt ? 'TRIGGERED' : wasExtended ? 'watching' : 'no', reversalExt ? colG : wasExtended ? colY : tblBg)
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Screener + alerts
+//   alertcondition() -> True/False filter column in the Pine Screener.
+//   plot(..., display=display.none) -> numeric sortable column.
+// ═════════════════════════════════════════════════════════════════════════════
+dayChgPct  = close[1] != 0 ? (close - close[1]) / close[1] * 100 : na
+atrMove    = ok(atr) ? math.abs(close - close[1]) / atr : na
+dollarVolM = close * volume / 1e6
+
+alertcondition(reversalExt,  'Reversal Extension', 'OK: Reversal Extension {{ticker}}')
+alertcondition(extendedDown, 'Downside Extended',  'OK: Downside Extended {{ticker}}')
+
+plot(reversalExt ? 1 : 0, 'Screener Trigger',   display = display.none, editable = false)
+plot(d10,        'Ext 10 (ATR)',      display = display.none, editable = false)
+plot(d21,        'Ext 21 (ATR)',      display = display.none, editable = false)
+plot(d50,        'Ext 50 (ATR)',      display = display.none, editable = false)
+plot(extDepth,   'Flush depth (ATR)', display = display.none, editable = false)
+plot(atrMove,    'Move / ATR',        display = display.none, editable = false)
+plot(dayChgPct,  'Chg 1D %',          display = display.none, editable = false)
+plot(dollarVolM, '$ Vol (M)',         display = display.none, editable = false)
