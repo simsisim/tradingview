@@ -1,0 +1,87 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// Pivots D/W/M — pivot points (P, R1–R3, S1–S3) for daily, weekly and monthly periods at the same time
+// Based on TradingView's built-in "Pivot Points Standard"
+
+//@version=6
+indicator("Pivots D/W/M", overlay=true, max_lines_count=500, max_labels_count=500)
+
+// ─────────────────────────────────────
+// INPUTS
+// ─────────────────────────────────────
+var g_gen = 'General'
+pvType     = input.string('Traditional', 'Type', options=['Traditional', 'Fibonacci', 'Woodie', 'Classic', 'DM', 'Camarilla'], group=g_gen)
+pivBack    = input.int(3, 'Number of Pivots Back', minval=1, maxval=20, group=g_gen)
+showLabels = input.bool(true, 'Labels', inline='lbl', group=g_gen)
+showPrice  = input.bool(true, 'Show price', inline='lbl', group=g_gen)
+lblSize    = input.string('Small', '', options=['Tiny', 'Small', 'Normal', 'Large'], inline='lbl', group=g_gen)
+lblPos     = input.string('Left', 'Labels position', options=['Left', 'Right'], group=g_gen)
+
+var g_tf = 'Timeframes (show · color · width · style)'
+showD = input.bool(true, 'Daily  ', inline='d', group=g_tf)
+dCol  = input.color(#2962FF, '', inline='d', group=g_tf)
+dW    = input.int(1, '', minval=1, maxval=10, inline='d', group=g_tf)
+dSty  = input.string('Solid', '', options=['Solid', 'Dashed', 'Dotted'], inline='d', group=g_tf)
+showW = input.bool(true, 'Weekly ', inline='w', group=g_tf)
+wCol  = input.color(#4CAF50, '', inline='w', group=g_tf)
+wW    = input.int(2, '', minval=1, maxval=10, inline='w', group=g_tf)
+wSty  = input.string('Solid', '', options=['Solid', 'Dashed', 'Dotted'], inline='w', group=g_tf)
+showM = input.bool(true, 'Monthly', inline='m', group=g_tf)
+mCol  = input.color(#FF9800, '', inline='m', group=g_tf)
+mW    = input.int(3, '', minval=1, maxval=10, inline='m', group=g_tf)
+mSty  = input.string('Solid', '', options=['Solid', 'Dashed', 'Dotted'], inline='m', group=g_tf)
+
+// ─────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────
+// ta.pivot_point_levels order: P, R1, S1, R2, S2, R3, S3, R4, S4, R5, S5 — only the first 7 are used
+var LEVELS   = 7
+var lvlNames = array.from('P', 'R1', 'S1', 'R2', 'S2', 'R3', 'S3')
+
+_style(string s) =>
+    s == 'Solid' ? line.style_solid : s == 'Dashed' ? line.style_dashed : line.style_dotted
+
+_size(string s) =>
+    s == 'Tiny' ? size.tiny : s == 'Normal' ? size.normal : s == 'Large' ? size.large : size.small
+
+// one call per timeframe on every bar (keeps ta.pivot_point_levels history consistent)
+_pivots(string tf, string pfx, bool on, color col, int w, string sty, line[] lns, label[] lbs) =>
+    isNew = timeframe.change(tf)
+    lv    = ta.pivot_point_levels(pvType, isNew)
+    // only for periods longer than the chart timeframe
+    tfOk  = timeframe.in_seconds(tf) > timeframe.in_seconds()
+    if on and tfOk and isNew
+        tEnd = time_close(tf)
+        x2   = na(tEnd) ? time + timeframe.in_seconds(tf) * 1000 : tEnd
+        for i = 0 to LEVELS - 1
+            v = array.get(lv, i)
+            if na(v)
+                array.push(lns, line(na))
+                array.push(lbs, label(na))
+            else
+                array.push(lns, line.new(time, v, x2, v, xloc=xloc.bar_time, color=col, width=w, style=_style(sty)))
+                if showLabels
+                    txt = pfx + ' ' + array.get(lvlNames, i) + (showPrice ? '  ' + str.tostring(v, format.mintick) : '')
+                    lx  = lblPos == 'Left' ? time : x2
+                    array.push(lbs, label.new(lx, v, txt, xloc=xloc.bar_time, color=color.new(col, 100), textcolor=col, size=_size(lblSize),
+                         style=lblPos == 'Left' ? label.style_label_right : label.style_label_left))
+                else
+                    array.push(lbs, label(na))
+        // keep only the last pivBack periods
+        while array.size(lns) > pivBack * LEVELS
+            line.delete(array.shift(lns))
+        while array.size(lbs) > pivBack * LEVELS
+            label.delete(array.shift(lbs))
+
+// ─────────────────────────────────────
+// DRAW
+// ─────────────────────────────────────
+var line[]  dLines  = array.new_line()
+var label[] dLabels = array.new_label()
+var line[]  wLines  = array.new_line()
+var label[] wLabels = array.new_label()
+var line[]  mLines  = array.new_line()
+var label[] mLabels = array.new_label()
+
+_pivots('D', 'D', showD, dCol, dW, dSty, dLines, dLabels)
+_pivots('W', 'W', showW, wCol, wW, wSty, wLines, wLabels)
+_pivots('M', 'M', showM, mCol, mW, mSty, mLines, mLabels)
