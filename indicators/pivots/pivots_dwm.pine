@@ -15,6 +15,9 @@ showLabels = input.bool(true, 'Labels', inline='lbl', group=g_gen)
 showPrice  = input.bool(true, 'Show price', inline='lbl', group=g_gen)
 lblSize    = input.string('Small', '', options=['Tiny', 'Small', 'Normal', 'Large'], inline='lbl', group=g_gen)
 lblPos     = input.string('Left', 'Labels position', options=['Left', 'Right'], group=g_gen)
+lineEnd    = input.string('Last bar + offset', 'Current period line ends at', options=['Last bar + offset', 'End of period'], group=g_gen,
+     tooltip="Last bar + offset: the running period's lines stop a few bars right of the last bar and grow with new bars. End of period: they are drawn to the end of the day/week/month in advance.")
+endOffset  = input.int(5, 'Offset (bars)', minval=0, maxval=100, group=g_gen)
 
 var g_tf = 'Timeframes (show · color · width · style)'
 showD = input.bool(true, 'Daily  ', inline='d', group=g_tf)
@@ -47,11 +50,23 @@ _size(string s) =>
 _pivots(string tf, string pfx, bool on, color col, int w, string sty, line[] lns, label[] lbs) =>
     isNew = timeframe.change(tf)
     lv    = ta.pivot_point_levels(pvType, isNew)
+    prevT = time[1]
     // only for periods longer than the chart timeframe
     tfOk  = timeframe.in_seconds(tf) > timeframe.in_seconds()
+    toEnd = lineEnd == 'End of period'
+    xLive = time + endOffset * timeframe.in_seconds() * 1000
     if on and tfOk and isNew
+        // close the finished period on its last bar
+        if not toEnd and array.size(lns) >= LEVELS
+            for i = array.size(lns) - LEVELS to array.size(lns) - 1
+                ln = array.get(lns, i)
+                lb = array.get(lbs, i)
+                if not na(ln)
+                    line.set_x2(ln, prevT)
+                if not na(lb) and lblPos == 'Right'
+                    label.set_x(lb, prevT)
         tEnd = time_close(tf)
-        x2   = na(tEnd) ? time + timeframe.in_seconds(tf) * 1000 : tEnd
+        x2   = not toEnd ? xLive : na(tEnd) ? time + timeframe.in_seconds(tf) * 1000 : tEnd
         for i = 0 to LEVELS - 1
             v = array.get(lv, i)
             if na(v)
@@ -71,6 +86,15 @@ _pivots(string tf, string pfx, bool on, color col, int w, string sty, line[] lns
             line.delete(array.shift(lns))
         while array.size(lbs) > pivBack * LEVELS
             label.delete(array.shift(lbs))
+    // grow the running period's lines with each new bar
+    else if on and tfOk and not toEnd and array.size(lns) >= LEVELS
+        for i = array.size(lns) - LEVELS to array.size(lns) - 1
+            ln = array.get(lns, i)
+            lb = array.get(lbs, i)
+            if not na(ln)
+                line.set_x2(ln, xLive)
+            if not na(lb) and lblPos == 'Right'
+                label.set_x(lb, xLive)
 
 // ─────────────────────────────────────
 // DRAW

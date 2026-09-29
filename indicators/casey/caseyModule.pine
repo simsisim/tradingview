@@ -80,7 +80,7 @@ histTransp = input.int(40, 'Previous days transparency', minval=0, maxval=100, g
 var g_ema = 'EMAs (show · length · color · width)'
 showE1 = input.bool(true, 'EMA 1', inline='e1', group=g_ema)
 e1Len  = input.int(13, '', minval=1, inline='e1', group=g_ema)
-e1Col  = input.color(#2962FF, '', inline='e1', group=g_ema)
+e1Col  = input.color(#F23645, '', inline='e1', group=g_ema)
 e1W    = input.int(4, '', minval=1, maxval=4, inline='e1', group=g_ema)
 showE2 = input.bool(true, 'EMA 2', inline='e2', group=g_ema)
 e2Len  = input.int(48, '', minval=1, inline='e2', group=g_ema)

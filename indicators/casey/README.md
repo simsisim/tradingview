@@ -11,7 +11,7 @@ Intraday overlay (Pine v6), `caseyModule.pine` (indicator title `caseyModule`). 
 | PD-H / PD-L | Previous day's high/low. `PD H/L Range`: *Regular only* (09:30–16:00, default) or *Regular + Extended*. |
 | PW-H / PW-L | Previous week's high/low, from the same bars as PD (per `PD H/L Range`). Intraday only. |
 | Pre-H / Pre-L | Today's premarket high/low: bars before the regular open. Needs extended hours on the chart. |
-| EMA 1/2/3 | Default 13 / 48 / 200 on close, blue / green / orange, solid, width 4. Each has show, length, color, width. |
+| EMA 1/2/3 | Default 13 / 48 / 200 on close, red / green / orange, solid, width 4. Each has show, length, color, width. |
 | VWAP | Magenta, solid, width 2. hlc3, anchored at the *start of the day* (resets on the first bar of the calendar day, which includes premarket) or at the *regular open* (hidden outside RTH). |
 
 Each of the 6 levels has its own **show · color · width · style**. Highs default to green (#4CAF50) and lows to red (#F23645). The line style tells them apart: PD is solid width 1, premarket is dashed width 1, and PW-H/PW-L (previous week high/low) are solid width 2. The week range uses the same bars as PD (**PD H/L Range**: regular only, or regular + extended), rolls on the week separator, and skips empty weeks.
