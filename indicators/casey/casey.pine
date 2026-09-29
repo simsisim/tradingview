@@ -1,0 +1,221 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// casey — day/week separators, PD-H/PD-L + premarket H/L levels, EMA 13/48/200, VWAP from the start of the day
+// Inspired by prev_day_hl/prev_day_hl.pine and vwap_ema_signals/vwap_ema_signals.pine
+
+//@version=6
+indicator("casey", overlay=true, max_lines_count=500, max_labels_count=500)
+
+// ─────────────────────────────────────
+// INPUTS
+// ─────────────────────────────────────
+var g_sess = 'Session'
+regSession = input.session('0930-1600', 'Regular Session', group=g_sess)
+sessTz     = input.string('America/New_York', 'Session Timezone', group=g_sess)
+pdMode     = input.string('Regular only', 'PD H/L Range', options=['Regular only', 'Regular + Extended'], group=g_sess,
+     tooltip='Regular only: PD-H/PD-L use the regular session bars only. Regular + Extended: every bar of the previous calendar day (in the session timezone).')
+
+var g_sep = 'Day / Week Separators'
+showDaySep  = input.bool(true, 'Day', inline='dsep', group=g_sep)
+daySepCol   = input.color(color.black, '', inline='dsep', group=g_sep)
+daySepW     = input.int(4, '', minval=1, maxval=10, inline='dsep', group=g_sep)
+daySepSty   = input.string('Dotted', '', options=['Solid', 'Dashed', 'Dotted'], inline='dsep', group=g_sep)
+showWeekSep = input.bool(true, 'Week', inline='wsep', group=g_sep)
+weekSepCol  = input.color(#2962FF, '', inline='wsep', group=g_sep)
+weekSepW    = input.int(4, '', minval=1, maxval=10, inline='wsep', group=g_sep)
+weekSepSty  = input.string('Solid', '', options=['Solid', 'Dashed', 'Dotted'], inline='wsep', group=g_sep)
+
+var g_lvl = 'Key Levels (show · color · width · style)'
+showPDH = input.bool(true, 'PD-H ', inline='pdh', group=g_lvl)
+pdhCol  = input.color(#AB47BC, '', inline='pdh', group=g_lvl)
+pdhW    = input.int(2, '', minval=1, maxval=10, inline='pdh', group=g_lvl)
+pdhSty  = input.string('Solid', '', options=['Solid', 'Dashed', 'Dotted'], inline='pdh', group=g_lvl)
+showPDL = input.bool(true, 'PD-L ', inline='pdl', group=g_lvl)
+pdlCol  = input.color(#AB47BC, '', inline='pdl', group=g_lvl)
+pdlW    = input.int(2, '', minval=1, maxval=10, inline='pdl', group=g_lvl)
+pdlSty  = input.string('Solid', '', options=['Solid', 'Dashed', 'Dotted'], inline='pdl', group=g_lvl)
+showPMH = input.bool(true, 'Pre-H', inline='pmh', group=g_lvl)
+pmhCol  = input.color(#00BCD4, '', inline='pmh', group=g_lvl)
+pmhW    = input.int(2, '', minval=1, maxval=10, inline='pmh', group=g_lvl)
+pmhSty  = input.string('Dashed', '', options=['Solid', 'Dashed', 'Dotted'], inline='pmh', group=g_lvl)
+showPML = input.bool(true, 'Pre-L', inline='pml', group=g_lvl)
+pmlCol  = input.color(#00BCD4, '', inline='pml', group=g_lvl)
+pmlW    = input.int(2, '', minval=1, maxval=10, inline='pml', group=g_lvl)
+pmlSty  = input.string('Dashed', '', options=['Solid', 'Dashed', 'Dotted'], inline='pml', group=g_lvl)
+
+var g_lvlOpt = 'Key Levels — Look'
+lvlStart   = input.string('Where level was set', 'Line starts at', options=['Where level was set', 'Start of today'], group=g_lvlOpt,
+     tooltip='Where level was set: the line begins at the bar that made the high/low. Start of today: all lines begin at the first bar of the current day.')
+extRight   = input.bool(true, 'Extend lines to the right', group=g_lvlOpt)
+glowOn     = input.bool(true, 'Glow (soft halo behind the line)', group=g_lvlOpt)
+glowTransp = input.int(82, 'Glow transparency', minval=0, maxval=100, group=g_lvlOpt)
+glowExtra  = input.int(4, 'Glow extra width', minval=1, maxval=10, group=g_lvlOpt)
+lblSize    = input.string('Large', 'Label size', options=['Small', 'Normal', 'Large', 'Huge'], inline='lbl', group=g_lvlOpt)
+showPrice  = input.bool(false, 'Show price', inline='lbl', group=g_lvlOpt)
+lblOffset  = input.int(3, 'Label offset (bars right)', minval=0, maxval=50, group=g_lvlOpt)
+showHist   = input.bool(false, 'Show levels on previous days', group=g_lvlOpt,
+     tooltip="Draws each past day's PD-H/PD-L/Pre-H/Pre-L as a segment spanning that day (thin, no glow). Uses the shared 500-line budget.")
+histTransp = input.int(40, 'Previous days transparency', minval=0, maxval=100, group=g_lvlOpt)
+
+var g_ema = 'EMAs (show · length · color · width)'
+showE1 = input.bool(true, 'EMA 1', inline='e1', group=g_ema)
+e1Len  = input.int(13, '', minval=1, inline='e1', group=g_ema)
+e1Col  = input.color(#2962FF, '', inline='e1', group=g_ema)
+e1W    = input.int(4, '', minval=1, maxval=4, inline='e1', group=g_ema)
+showE2 = input.bool(true, 'EMA 2', inline='e2', group=g_ema)
+e2Len  = input.int(48, '', minval=1, inline='e2', group=g_ema)
+e2Col  = input.color(#4CAF50, '', inline='e2', group=g_ema)
+e2W    = input.int(4, '', minval=1, maxval=4, inline='e2', group=g_ema)
+showE3 = input.bool(true, 'EMA 3', inline='e3', group=g_ema)
+e3Len  = input.int(200, '', minval=1, inline='e3', group=g_ema)
+e3Col  = input.color(#FF9800, '', inline='e3', group=g_ema)
+e3W    = input.int(4, '', minval=1, maxval=4, inline='e3', group=g_ema)
+
+var g_vw = 'VWAP'
+showVwap   = input.bool(true, 'VWAP', inline='vw', group=g_vw)
+vwCol      = input.color(#E040FB, '', inline='vw', group=g_vw)
+vwW        = input.int(2, '', minval=1, maxval=4, inline='vw', group=g_vw)
+vwSrc      = input.source(hlc3, 'Source', group=g_vw)
+vwAnchor   = input.string('Start of day (incl. premarket)', 'Anchor', options=['Start of day (incl. premarket)', 'Regular open'], group=g_vw,
+     tooltip='Start of day: resets on the first bar of the calendar day (04:00 ET with extended hours on). Regular open: resets at the regular session open and is hidden outside the regular session.')
+
+// ─────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────
+_style(string s) =>
+    s == 'Solid' ? line.style_solid : s == 'Dashed' ? line.style_dashed : line.style_dotted
+
+_size(string s) =>
+    s == 'Huge' ? size.huge : s == 'Large' ? size.large : s == 'Normal' ? size.normal : size.small
+
+// ─────────────────────────────────────
+// DAY / WEEK / SESSION DETECTION (calendar day in the session timezone)
+// ─────────────────────────────────────
+isIntra  = timeframe.isintraday
+dom      = dayofmonth(time, sessTz)
+dow      = dayofweek(time, sessTz)
+newDay   = na(time[1]) or dom != dom[1]
+newWeek  = na(time[1]) or (newDay and dow < dow[1]) or (time - time[1]) > 7 * 86400000
+
+inRegular   = not na(time(timeframe.period, regSession, sessTz))
+regStartMin = int(str.tonumber(str.substring(regSession, 0, 2))) * 60 + int(str.tonumber(str.substring(regSession, 2, 4)))
+barMin      = hour(time, sessTz) * 60 + minute(time, sessTz)
+isPre       = not inRegular and barMin < regStartMin
+
+// ─────────────────────────────────────
+// SEPARATORS
+// ─────────────────────────────────────
+// on a week boundary the week line replaces the day line
+if showWeekSep and newWeek and (isIntra or timeframe.isdaily)
+    line.new(bar_index, low, bar_index, high, color=weekSepCol, width=weekSepW, style=_style(weekSepSty), extend=extend.both)
+else if showDaySep and newDay and isIntra
+    line.new(bar_index, low, bar_index, high, color=daySepCol, width=daySepW, style=_style(daySepSty), extend=extend.both)
+
+// ─────────────────────────────────────
+// PREVIOUS DAY H/L + PREMARKET H/L
+// ─────────────────────────────────────
+var int dayStart = na
+
+// running extremes of the current day (regular only or full day, per pdMode)
+var float curH = na
+var int   curHT = na
+var float curL = na
+var int   curLT = na
+
+// previous day's extremes
+var float pdH = na
+var int   pdHT = na
+var float pdL = na
+var int   pdLT = na
+
+// today's premarket extremes
+var float pmH = na
+var int   pmHT = na
+var float pmL = na
+var int   pmLT = na
+
+if newDay and isIntra
+    // freeze the day that just ended as a history segment before rolling
+    if showHist and not na(dayStart)
+        endT = time[1]
+        if showPDH and not na(pdH)
+            line.new(dayStart, pdH, endT, pdH, xloc=xloc.bar_time, color=color.new(pdhCol, histTransp), width=1, style=_style(pdhSty))
+        if showPDL and not na(pdL)
+            line.new(dayStart, pdL, endT, pdL, xloc=xloc.bar_time, color=color.new(pdlCol, histTransp), width=1, style=_style(pdlSty))
+        if showPMH and not na(pmH)
+            line.new(pmHT, pmH, endT, pmH, xloc=xloc.bar_time, color=color.new(pmhCol, histTransp), width=1, style=_style(pmhSty))
+        if showPML and not na(pmL)
+            line.new(pmLT, pmL, endT, pmL, xloc=xloc.bar_time, color=color.new(pmlCol, histTransp), width=1, style=_style(pmlSty))
+
+    // roll only if the finished day actually had qualifying bars (skips holidays / empty days)
+    if not na(curH)
+        pdH  := curH
+        pdHT := curHT
+        pdL  := curL
+        pdLT := curLT
+    curH := na
+    curL := na
+    pmH  := na
+    pmL  := na
+    dayStart := time
+
+useBar = pdMode == 'Regular only' ? inRegular : true
+if isIntra and useBar
+    if na(curH) or high > curH
+        curH  := high
+        curHT := time
+    if na(curL) or low < curL
+        curL  := low
+        curLT := time
+
+if isIntra and isPre
+    if na(pmH) or high > pmH
+        pmH  := high
+        pmHT := time
+    if na(pmL) or low < pmL
+        pmL  := low
+        pmLT := time
+
+// current-day level lines are redrawn on the last bar only
+var line[]  lvlLines  = array.new_line()
+var label[] lvlLabels = array.new_label()
+
+_drawLevel(bool on, float y, int tSet, string name, color col, int w, string sty, bool above) =>
+    if on and not na(y)
+        x1   = lvlStart == 'Start of today' or na(tSet) ? dayStart : tSet
+        x2   = time
+        ext  = extRight ? extend.right : extend.none
+        if glowOn
+            array.push(lvlLines, line.new(x1, y, x2, y, xloc=xloc.bar_time, extend=ext, color=color.new(col, glowTransp), width=w + glowExtra, style=line.style_solid))
+        array.push(lvlLines, line.new(x1, y, x2, y, xloc=xloc.bar_time, extend=ext, color=col, width=w, style=_style(sty)))
+        lx  = time + lblOffset * timeframe.in_seconds() * 1000
+        txt = showPrice ? name + '  ' + str.tostring(y, format.mintick) : name
+        array.push(lvlLabels, label.new(lx, y, txt, xloc=xloc.bar_time, color=color.new(col, 100), textcolor=col, size=_size(lblSize),
+             style=above ? label.style_label_lower_left : label.style_label_upper_left))
+
+if barstate.islast and isIntra
+    for ln in lvlLines
+        line.delete(ln)
+    for lb in lvlLabels
+        label.delete(lb)
+    array.clear(lvlLines)
+    array.clear(lvlLabels)
+    _drawLevel(showPDH, pdH, pdHT, 'PD-H',  pdhCol, pdhW, pdhSty, true)
+    _drawLevel(showPDL, pdL, pdLT, 'PD-L',  pdlCol, pdlW, pdlSty, false)
+    _drawLevel(showPMH, pmH, pmHT, 'Pre-H', pmhCol, pmhW, pmhSty, true)
+    _drawLevel(showPML, pmL, pmLT, 'Pre-L', pmlCol, pmlW, pmlSty, false)
+
+// ─────────────────────────────────────
+// EMAs
+// ─────────────────────────────────────
+plot(ta.ema(close, e1Len), 'EMA 1', color=e1Col, linewidth=e1W, display=showE1 ? display.all : display.none)
+plot(ta.ema(close, e2Len), 'EMA 2', color=e2Col, linewidth=e2W, display=showE2 ? display.all : display.none)
+plot(ta.ema(close, e3Len), 'EMA 3', color=e3Col, linewidth=e3W, display=showE3 ? display.all : display.none)
+
+// ─────────────────────────────────────
+// VWAP from the start of the day
+// ─────────────────────────────────────
+anchorDay = vwAnchor == 'Start of day (incl. premarket)'
+regOpen   = inRegular and not inRegular[1]
+vwapValue = ta.vwap(vwSrc, anchorDay ? newDay : regOpen)
+vwapShown = isIntra and (anchorDay or inRegular) ? vwapValue : na
+plot(vwapShown, 'VWAP', color=vwCol, linewidth=vwW, style=plot.style_linebr, display=showVwap ? display.all : display.none)
