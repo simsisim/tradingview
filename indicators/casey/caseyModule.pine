@@ -3,7 +3,7 @@
 // Inspired by prev_day_hl/prev_day_hl.pine and vwap_ema_signals/vwap_ema_signals.pine
 
 //@version=6
-indicator("caseyModule", overlay=true, max_lines_count=500, max_labels_count=500)
+indicator("caseyModule", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500)
 
 // ─────────────────────────────────────
 // INPUTS
@@ -26,32 +26,53 @@ weekSepSty  = input.string('Solid', '', options=['Solid', 'Dashed', 'Dotted'], i
 
 var g_lvl = 'Key Levels (show · color · width · style)'
 showPDH = input.bool(true, 'PD-H ', inline='pdh', group=g_lvl)
-pdhCol  = input.color(#AB47BC, '', inline='pdh', group=g_lvl)
-pdhW    = input.int(2, '', minval=1, maxval=10, inline='pdh', group=g_lvl)
+pdhCol  = input.color(#4CAF50, '', inline='pdh', group=g_lvl)
+pdhW    = input.int(1, '', minval=1, maxval=10, inline='pdh', group=g_lvl)
 pdhSty  = input.string('Solid', '', options=['Solid', 'Dashed', 'Dotted'], inline='pdh', group=g_lvl)
 showPDL = input.bool(true, 'PD-L ', inline='pdl', group=g_lvl)
-pdlCol  = input.color(#AB47BC, '', inline='pdl', group=g_lvl)
-pdlW    = input.int(2, '', minval=1, maxval=10, inline='pdl', group=g_lvl)
+pdlCol  = input.color(#F23645, '', inline='pdl', group=g_lvl)
+pdlW    = input.int(1, '', minval=1, maxval=10, inline='pdl', group=g_lvl)
 pdlSty  = input.string('Solid', '', options=['Solid', 'Dashed', 'Dotted'], inline='pdl', group=g_lvl)
 showPMH = input.bool(true, 'Pre-H', inline='pmh', group=g_lvl)
-pmhCol  = input.color(#00BCD4, '', inline='pmh', group=g_lvl)
-pmhW    = input.int(2, '', minval=1, maxval=10, inline='pmh', group=g_lvl)
+pmhCol  = input.color(#4CAF50, '', inline='pmh', group=g_lvl)
+pmhW    = input.int(1, '', minval=1, maxval=10, inline='pmh', group=g_lvl)
 pmhSty  = input.string('Dashed', '', options=['Solid', 'Dashed', 'Dotted'], inline='pmh', group=g_lvl)
 showPML = input.bool(true, 'Pre-L', inline='pml', group=g_lvl)
-pmlCol  = input.color(#00BCD4, '', inline='pml', group=g_lvl)
-pmlW    = input.int(2, '', minval=1, maxval=10, inline='pml', group=g_lvl)
+pmlCol  = input.color(#F23645, '', inline='pml', group=g_lvl)
+pmlW    = input.int(1, '', minval=1, maxval=10, inline='pml', group=g_lvl)
 pmlSty  = input.string('Dashed', '', options=['Solid', 'Dashed', 'Dotted'], inline='pml', group=g_lvl)
+showPWH = input.bool(true, 'PW-H ', inline='pwh', group=g_lvl)
+pwhCol  = input.color(#4CAF50, '', inline='pwh', group=g_lvl)
+pwhW    = input.int(2, '', minval=1, maxval=10, inline='pwh', group=g_lvl)
+pwhSty  = input.string('Solid', '', options=['Solid', 'Dashed', 'Dotted'], inline='pwh', group=g_lvl)
+showPWL = input.bool(true, 'PW-L ', inline='pwl', group=g_lvl)
+pwlCol  = input.color(#F23645, '', inline='pwl', group=g_lvl)
+pwlW    = input.int(2, '', minval=1, maxval=10, inline='pwl', group=g_lvl)
+pwlSty  = input.string('Solid', '', options=['Solid', 'Dashed', 'Dotted'], inline='pwl', group=g_lvl)
 
 var g_lvlOpt = 'Key Levels — Look'
 lvlStart   = input.string('Where level was set', 'Line starts at', options=['Where level was set', 'Start of today'], group=g_lvlOpt,
      tooltip='Where level was set: the line begins at the bar that made the high/low. Start of today: all lines begin at the first bar of the current day.')
 extRight   = input.bool(true, 'Extend lines to the right', group=g_lvlOpt)
-glowOn     = input.bool(true, 'Glow (soft halo behind the line)', group=g_lvlOpt)
+glowOn     = input.bool(false, 'Glow (soft halo behind the line)', group=g_lvlOpt)
 glowTransp = input.int(82, 'Glow transparency', minval=0, maxval=100, group=g_lvlOpt)
 glowExtra  = input.int(4, 'Glow extra width', minval=1, maxval=10, group=g_lvlOpt)
+zoneOn     = input.bool(true, 'Zone (thin band on the level)', group=g_lvlOpt,
+     tooltip='A translucent band hugging each level: below a high (PD-H, Pre-H), above a low (PD-L, Pre-L).')
+zoneMode   = input.string('ATR', 'Zone thickness', options=['ATR', 'Price tier'], inline='zn', group=g_lvlOpt,
+     tooltip='ATR: previous day\'s daily ATR × multiplier. Price tier: 0.10 below $50, 0.25 up to $100, 0.50 above.')
+atrLen     = input.int(14, 'ATR len', minval=1, inline='zn', group=g_lvlOpt)
+atrMult    = input.float(0.03, '×', minval=0.0, step=0.01, inline='zn', group=g_lvlOpt)
+zoneTransp = input.int(80, 'Zone transparency', minval=0, maxval=100, group=g_lvlOpt)
+lblStyle   = input.string('Filled tag', 'Label style', options=['Filled tag', 'Text only'], group=g_lvlOpt,
+     tooltip='Filled tag: solid colored tag sitting on the line, text in black or white by contrast. Text only: colored text above a high / below a low.')
 lblSize    = input.string('Large', 'Label size', options=['Small', 'Normal', 'Large', 'Huge'], inline='lbl', group=g_lvlOpt)
 showPrice  = input.bool(false, 'Show price', inline='lbl', group=g_lvlOpt)
+tagTxt     = input.string('Black', 'Tag text color', options=['Black', 'White', 'Auto'], group=g_lvlOpt,
+     tooltip='Text color inside the filled tags. Auto picks black or white by the tag color\'s brightness.')
 lblOffset  = input.int(3, 'Label offset (bars right)', minval=0, maxval=50, group=g_lvlOpt)
+lblStagger = input.int(5, 'PD labels extra offset (bars)', minval=0, maxval=50, group=g_lvlOpt,
+     tooltip='Pushes the PD-H/PD-L tags further right than Pre-H/Pre-L so they do not overlap when the levels are close. PW-H/PW-L tags go twice as far.')
 showHist   = input.bool(false, 'Show levels on previous days', group=g_lvlOpt,
      tooltip="Draws each past day's PD-H/PD-L/Pre-H/Pre-L as a segment spanning that day (thin, no glow). Uses the shared 500-line budget.")
 histTransp = input.int(40, 'Previous days transparency', minval=0, maxval=100, group=g_lvlOpt)
@@ -82,7 +103,7 @@ var g_tbl = 'Bias Table & Background'
 showTable  = input.bool(true, 'Show table', group=g_tbl)
 tblPos     = input.string('Top Right', 'Position', options=['Top Right', 'Top Left', 'Middle Right', 'Bottom Right', 'Bottom Left'], group=g_tbl)
 tblSize    = input.string('Normal', 'Text size', options=['Small', 'Normal', 'Large', 'Huge'], group=g_tbl)
-showBg     = input.bool(true, 'Background on full bull / full bear', group=g_tbl,
+showBg     = input.bool(false, 'Background on full bull / full bear', group=g_tbl,
      tooltip='Full bull: close above PD-H and Pre-H, and close > EMA 1 > EMA 2 > EMA 3. Full bear is the mirror. Pre-H/Pre-L are skipped while premarket is still forming or when the chart has no premarket data.')
 bullCol    = input.color(#4CAF50, 'Bull', inline='bc', group=g_tbl)
 bearCol    = input.color(#F23645, 'Bear', inline='bc', group=g_tbl)
@@ -98,6 +119,22 @@ _style(string s) =>
 
 _size(string s) =>
     s == 'Huge' ? size.huge : s == 'Large' ? size.large : s == 'Normal' ? size.normal : size.small
+
+// black text on light tags, white on dark
+_txtCol(color bg) =>
+    0.299 * color.r(bg) + 0.587 * color.g(bg) + 0.114 * color.b(bg) > 160 ? color.black : color.white
+
+// previous day's daily ATR (the [1] keeps today's unfinished bar out)
+dATR = request.security(syminfo.tickerid, 'D', ta.atr(atrLen)[1], lookahead=barmerge.lookahead_on)
+
+_thick(float y) =>
+    zoneMode == 'ATR' and not na(dATR) ? dATR * atrMult : y > 100 ? 0.50 : y > 50 ? 0.25 : 0.10
+
+// band hugging the level: below a high, above a low
+_zone(int x1, int x2, float y, bool isHigh, color col, int transp, string ext) =>
+    t = _thick(y)
+    box.new(x1, isHigh ? y : y + t, x2, isHigh ? y - t : y, xloc=xloc.bar_time, extend=ext,
+         border_color=color.new(col, 100), bgcolor=color.new(col, transp))
 
 // ─────────────────────────────────────
 // DAY / WEEK / SESSION DETECTION (calendar day in the session timezone)
@@ -123,7 +160,7 @@ else if showDaySep and newDay and isIntra
     line.new(bar_index, low, bar_index, high, color=daySepCol, width=daySepW, style=_style(daySepSty), extend=extend.both)
 
 // ─────────────────────────────────────
-// PREVIOUS DAY H/L + PREMARKET H/L
+// PREVIOUS DAY H/L + PREMARKET H/L + PREVIOUS WEEK H/L
 // ─────────────────────────────────────
 var int dayStart = na
 
@@ -139,6 +176,16 @@ var int   pdHT = na
 var float pdL = na
 var int   pdLT = na
 
+// running extremes of the current week, and the previous week's (same bars as PD, per pdMode)
+var float cwH = na
+var int   cwHT = na
+var float cwL = na
+var int   cwLT = na
+var float pwH = na
+var int   pwHT = na
+var float pwL = na
+var int   pwLT = na
+
 // today's premarket extremes
 var float pmH = na
 var int   pmHT = na
@@ -149,6 +196,20 @@ if newDay and isIntra
     // freeze the day that just ended as a history segment before rolling
     if showHist and not na(dayStart)
         endT = time[1]
+        hzT  = zoneTransp + int((100 - zoneTransp) * histTransp / 100)
+        if zoneOn
+            if showPDH and not na(pdH)
+                _zone(dayStart, endT, pdH, true, pdhCol, hzT, extend.none)
+            if showPDL and not na(pdL)
+                _zone(dayStart, endT, pdL, false, pdlCol, hzT, extend.none)
+            if showPMH and not na(pmH)
+                _zone(pmHT, endT, pmH, true, pmhCol, hzT, extend.none)
+            if showPML and not na(pmL)
+                _zone(pmLT, endT, pmL, false, pmlCol, hzT, extend.none)
+            if showPWH and not na(pwH)
+                _zone(dayStart, endT, pwH, true, pwhCol, hzT, extend.none)
+            if showPWL and not na(pwL)
+                _zone(dayStart, endT, pwL, false, pwlCol, hzT, extend.none)
         if showPDH and not na(pdH)
             line.new(dayStart, pdH, endT, pdH, xloc=xloc.bar_time, color=color.new(pdhCol, histTransp), width=1, style=_style(pdhSty))
         if showPDL and not na(pdL)
@@ -157,6 +218,10 @@ if newDay and isIntra
             line.new(pmHT, pmH, endT, pmH, xloc=xloc.bar_time, color=color.new(pmhCol, histTransp), width=1, style=_style(pmhSty))
         if showPML and not na(pmL)
             line.new(pmLT, pmL, endT, pmL, xloc=xloc.bar_time, color=color.new(pmlCol, histTransp), width=1, style=_style(pmlSty))
+        if showPWH and not na(pwH)
+            line.new(dayStart, pwH, endT, pwH, xloc=xloc.bar_time, color=color.new(pwhCol, histTransp), width=1, style=_style(pwhSty))
+        if showPWL and not na(pwL)
+            line.new(dayStart, pwL, endT, pwL, xloc=xloc.bar_time, color=color.new(pwlCol, histTransp), width=1, style=_style(pwlSty))
 
     // roll only if the finished day actually had qualifying bars (skips holidays / empty days)
     if not na(curH)
@@ -166,6 +231,14 @@ if newDay and isIntra
         pdLT := curLT
     curH := na
     curL := na
+    if newWeek
+        if not na(cwH)
+            pwH  := cwH
+            pwHT := cwHT
+            pwL  := cwL
+            pwLT := cwLT
+        cwH := na
+        cwL := na
     pmH  := na
     pmL  := na
     dayStart := time
@@ -178,6 +251,12 @@ if isIntra and useBar
     if na(curL) or low < curL
         curL  := low
         curLT := time
+    if na(cwH) or high > cwH
+        cwH  := high
+        cwHT := time
+    if na(cwL) or low < cwL
+        cwL  := low
+        cwLT := time
 
 if isIntra and isPre
     if na(pmH) or high > pmH
@@ -190,31 +269,43 @@ if isIntra and isPre
 // current-day level lines are redrawn on the last bar only
 var line[]  lvlLines  = array.new_line()
 var label[] lvlLabels = array.new_label()
+var box[]   lvlBoxes  = array.new_box()
 
-_drawLevel(bool on, float y, int tSet, string name, color col, int w, string sty, bool above) =>
+_drawLevel(bool on, float y, int tSet, string name, color col, int w, string sty, bool isHigh, int stagger) =>
     if on and not na(y)
         x1   = lvlStart == 'Start of today' or na(tSet) ? dayStart : tSet
         x2   = time
         ext  = extRight ? extend.right : extend.none
+        if zoneOn
+            array.push(lvlBoxes, _zone(x1, x2, y, isHigh, col, zoneTransp, ext))
         if glowOn
             array.push(lvlLines, line.new(x1, y, x2, y, xloc=xloc.bar_time, extend=ext, color=color.new(col, glowTransp), width=w + glowExtra, style=line.style_solid))
         array.push(lvlLines, line.new(x1, y, x2, y, xloc=xloc.bar_time, extend=ext, color=col, width=w, style=_style(sty)))
-        lx  = time + lblOffset * timeframe.in_seconds() * 1000
+        lx  = time + (lblOffset + stagger) * timeframe.in_seconds() * 1000
         txt = showPrice ? name + '  ' + str.tostring(y, format.mintick) : name
-        array.push(lvlLabels, label.new(lx, y, txt, xloc=xloc.bar_time, color=color.new(col, 100), textcolor=col, size=_size(lblSize),
-             style=above ? label.style_label_lower_left : label.style_label_upper_left))
+        if lblStyle == 'Filled tag'
+            array.push(lvlLabels, label.new(lx, y, txt, xloc=xloc.bar_time, color=col, textcolor=tagTxt == 'Black' ? color.black : tagTxt == 'White' ? color.white : _txtCol(col), size=_size(lblSize),
+                 style=label.style_label_left))
+        else
+            array.push(lvlLabels, label.new(lx, y, txt, xloc=xloc.bar_time, color=color.new(col, 100), textcolor=col, size=_size(lblSize),
+                 style=isHigh ? label.style_label_lower_left : label.style_label_upper_left))
 
 if barstate.islast and isIntra
     for ln in lvlLines
         line.delete(ln)
     for lb in lvlLabels
         label.delete(lb)
+    for bx in lvlBoxes
+        box.delete(bx)
     array.clear(lvlLines)
     array.clear(lvlLabels)
-    _drawLevel(showPDH, pdH, pdHT, 'PD-H',  pdhCol, pdhW, pdhSty, true)
-    _drawLevel(showPDL, pdL, pdLT, 'PD-L',  pdlCol, pdlW, pdlSty, false)
-    _drawLevel(showPMH, pmH, pmHT, 'Pre-H', pmhCol, pmhW, pmhSty, true)
-    _drawLevel(showPML, pmL, pmLT, 'Pre-L', pmlCol, pmlW, pmlSty, false)
+    array.clear(lvlBoxes)
+    _drawLevel(showPDH, pdH, pdHT, 'PD-H',  pdhCol, pdhW, pdhSty, true,  lblStagger)
+    _drawLevel(showPDL, pdL, pdLT, 'PD-L',  pdlCol, pdlW, pdlSty, false, lblStagger)
+    _drawLevel(showPMH, pmH, pmHT, 'Pre-H', pmhCol, pmhW, pmhSty, true,  0)
+    _drawLevel(showPML, pmL, pmLT, 'Pre-L', pmlCol, pmlW, pmlSty, false, 0)
+    _drawLevel(showPWH, pwH, pwHT, 'PW-H',  pwhCol, pwhW, pwhSty, true,  2 * lblStagger)
+    _drawLevel(showPWL, pwL, pwLT, 'PW-L',  pwlCol, pwlW, pwlSty, false, 2 * lblStagger)
 
 // ─────────────────────────────────────
 // EMAs
