@@ -1,0 +1,652 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © simsisim
+//
+// s-VTG Columns — SCREENER copy of visual_vtgCombo.pine.
+//
+// Differs from s-VTG Combo only in the output layer, so every trigger is also a
+// visible column in the Pine Screener's "Manage columns" list (1 = fired on the
+// last bar, 0 = not) plus a "# Triggers" count column:
+//   * the chart-line plots (EMA cloud, 21 EMA / 50 SMA, 4 EMA, VTG Old EMAs) and
+//     the trigger barcolor were removed — they count toward Pine's 64-plot limit
+//     and the 25 alertconditions + 25 trigger columns + metrics need the room.
+//     Labels, the ID line, the base box and the extension table stay (drawings
+//     do not count). Use s-VTG Combo on the chart; this one in the screener.
+//   * the line/paint inputs are left in place but have no effect here.
+// Engine (trigger math) is identical — KEEP IN SYNC with visual_vtgCombo.pine.
+//
+// Original header:
+// s-VTG Combo — momentum sub-model indicator + Pine Screener source.
+// Re-implementation of the Voyage Trading Group "VTG Combo Scanner" concept
+// (Oliver Wiedmaier). Setup definitions: see signal_spec.md.
+//
+// ONE script, two modes:
+//   * Indicator  — EMA cloud, 21 EMA / 50 SMA, ATR-extension table, bar coloring
+//                  and current-bar labels, all driven by "Show *" switches.
+//   * Pine Screener — every trigger is an alertcondition() filter chip and every
+//                  metric a hidden numeric plot() (display.none + editable=false so they
+//                  stay off the chart and out of the Style tab). The metric
+//                  columns mirror the s-VTG ATR table (21/50/Low ATR distance,
+//                  day/body range expansion), computed inline here on the native
+//                  TF — keep the formulas in sync with visual_vtgAtr.pine.
+//                  No request.*  -> screener-safe.
+//
+// Native chart timeframe. All setups are daily-oriented -> use a Daily chart.
+
+//@version=6
+// Title carries the "s-" prefix so it sorts/searches easily in the Pine Screener
+// "Indicator" list. shorttitle stays clean for the chart legend.
+indicator('s-VTG Columns', 'VTG Columns', overlay = true, max_labels_count = 500, max_lines_count = 200, max_boxes_count = 200)
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Inputs — top level mirrors the VTG Combo Scanner panel (order + defaults)
+// ═════════════════════════════════════════════════════════════════════════════
+showLabels        = input.bool(true,  'Show trigger labels (text tag on the bar)')
+showOn            = input.string('All bars', 'Show triggers on', options = ['All bars', 'Current bar only', 'Last N bars'], inline = 'scope', tooltip = 'Scope for everything drawn per trigger: painted bar, label, Inside Day breakout line and VTG New base box. "Last N bars" counts back from the latest bar (N = the number to the right). Signals, alerts and screener columns are unaffected. Note: on a chart left open live, a bar that fired while forming keeps its paint after the window moves past it (Pine cannot un-paint a closed bar) — labels/lines/boxes are removed; reload the chart to clear the paint.')
+showLastN         = input.int(5, 'N', minval = 1, inline = 'scope')
+showBreakout      = input.bool(false, 'Show Breakout')
+showPreSling      = input.bool(false, 'Show Pre-Slingshot (yellow bars)')
+showSlingshot     = input.bool(true,  'Show Slingshot (4 EMA, High)')
+show4EmaCloseX    = input.bool(false, 'Show 4 EMA Close Cross')
+showSlingClose    = input.bool(false, 'Show Slingshot (4 EMA, Close)')
+show4pct          = input.bool(true,  'Show 4% Breakout')
+showInsideDay     = input.bool(false, 'Show Inside Day')
+showInsideBO      = input.bool(true,  'Show Inside Day Breakout')
+showOops          = input.bool(false, 'Show Oops Reversal')
+showSuperOops     = input.bool(false, 'Show Super Oops')
+showOEL           = input.bool(true,  'Show OEL')
+showAtrOver       = input.bool(false, 'Show 100%+ ATR')
+showAtrUnder      = input.bool(false, 'Show < 100% ATR')
+
+// extra triggers (not in Oliver's panel) — top-level so they sit with the main list
+showKicker  = input.bool(false, 'Show Kicker')
+show3Bar    = input.bool(false, 'Show 3-Bar Break')
+showOEH     = input.bool(false, 'Show OEH')
+showEngulf  = input.bool(false, 'Show Engulf')
+showNdayBO  = input.bool(false, 'Show N-day High Breakout')
+showBoCandle = input.bool(false, 'Show Breakout Candle (live)')
+showVbOld   = input.bool(false, 'Show VTG Breakout (Old)')
+showVbNew   = input.bool(false, 'Show VTG Breakout (New)')
+
+showAllTriggers = input.bool(false, 'Show All (overrides every "Show *" toggle above)', tooltip = 'When on, every trigger paints its bar / draws its label regardless of the individual Show switches above.')
+
+inputsInStatus    = input.bool(true,  'Inputs in status line')   // cosmetic (Pine cannot toggle input display at runtime)
+paintBars         = input.bool(true,  'Paint the trigger bar (like TAPLOT)')
+labelTextAuto     = input.bool(true,  'Label text auto black/white for contrast')
+
+gSig = 'Signal confirmation'
+confirmBody = input.bool(false, 'Confirm on full body (else close)', group = gSig, tooltip = 'A level-break signal needs the CLOSE beyond the level (or the whole candle body if this is on). A wick that pierces the level and then fades back does not count and is not kept in history.')
+livePreview = input.bool(false, 'Live intrabar preview on the forming bar', group = gSig, tooltip = 'OFF (default): pure close-confirmed everywhere — history matches the classic close-based definitions exactly. ON: while the current bar is still forming a signal shows tentatively off the wick and is removed on close if it did not confirm (repaints the forming bar only, never history).')
+
+gMA  = 'Moving averages'
+showCloud = input.bool(true, 'Show EMA cloud',        group = gMA)
+cloudLen  = input.int(21,    'EMA cloud length',      minval = 1, group = gMA)
+showEma   = input.bool(true, 'Show EMA line',         group = gMA)
+emaLineLen= input.int(21,    'EMA line length',       minval = 1, group = gMA)
+showSma   = input.bool(true, 'Show SMA line',         group = gMA)
+smaLen    = input.int(50,    'SMA line length',       minval = 1, group = gMA)
+
+gATR = 'ATR / extension table'
+atrLen       = input.int(14,           'ATR length',            minval = 1, group = gATR)
+showExtTable = input.bool(true,         'Show extension table',  group = gATR)
+tablePos     = input.string('Bottom Left', 'Table position', ['Top Left', 'Top Right', 'Bottom Left', 'Bottom Right'], group = gATR)
+
+gS = 'Slingshot'
+// Default config === TAPLOT "Sling Shot" (© TaPlot, MPL-2.0) exactly:
+//   EMALine  = ta.ema(high, 4)
+//   slingshot = close > EMALine and close[1]<EMALine[1] and close[2]<EMALine[2] and close[3]<EMALine[3]
+slingEmaLen = input.int(4, 'Slingshot EMA length', minval = 1, group = gS)
+slingEmaSrc = input.string('High', 'Slingshot EMA source', ['High', 'Close'], group = gS, tooltip = 'TAPLOT SlingShot uses the EMA of the highs.')
+slingBars   = input.int(3, 'Pullback bars below EMA', minval = 1, group = gS)
+slingPbSrc  = input.string('Close', 'Pullback test uses', ['Close', 'High'], group = gS, tooltip = 'Close = exact TAPLOT (each of the last N closes below the EMA). High = stricter: the whole bar (its high) stays below the EMA.')
+showSlingEma      = input.bool(true, '4 EMA High: show line on chart',  group = gS, tooltip = 'Plots the EMA used internally by Slingshot (4 EMA, High) as a visible line, separate from the 21 EMA cloud/line and 50 SMA below. This is a chart LINE toggle only — the trigger itself (bar colour / label) is switched on/off above via "Show Slingshot (4 EMA, High)".')
+showSlingEmaClose = input.bool(true, '4 EMA Close: show line on chart', group = gS, tooltip = 'Plots the Close-based 4 EMA (used by the two Close variants above) as a visible line. Chart LINE toggle only — the triggers themselves are switched on/off above via "Show 4 EMA Close Cross" / "Show Slingshot (4 EMA, Close)".')
+
+gID = 'Inside Day'
+idBoWindow  = input.int(3, 'Breakout window (bars after the inside day)', minval = 1, group = gID, tooltip = 'The inside day breakout counts if price clears the inside day range within this many bars. 1 = only the very next bar.')
+idLineShow  = input.bool(true,        'Draw breakout level line', group = gID)
+idLineColor = input.color(color.black,'Breakout line color',      group = gID)
+idLineLen   = input.int(5, 'Breakout line max length (bars)', minval = 1, group = gID, tooltip = 'Short segment from the inside day to just past the breakout — never extended right.')
+
+g4 = '4% Breakout'
+pctThresh = input.float(4.0, 'Day move threshold %', minval = 0, group = g4)
+atrMax    = input.float(4.0, 'Max ATR (price units)', minval = 0, group = g4)
+
+gP = 'Pre-Slingshot'
+preTrendLook = input.int(5,     'Trend lookback (EMA rising)', minval = 1, group = gP)
+preNearK     = input.float(0.75,'Max distance to EMA (xATR)',  minval = 0, group = gP)
+
+gO = 'OEL / OEH'
+oelTicks  = input.float(0.0,  'OEL/OEH tolerance (ticks)', minval = 0, group = gO)
+oelGapOnly= input.bool(false, 'OEL only on gap-up into prior upper wick', group = gO)
+
+gCmp = 'Breakout composite'
+compUnder1Atr = input.bool(false, 'Restrict "Breakout" to moves < 1 ATR', group = gCmp)
+
+gX = 'N-day High Breakout'
+boPrice     = input.int(60,  'N-day: price lookback',  minval = 1, group = gX)
+boVol       = input.int(60,  'N-day: volume lookback', minval = 1, group = gX)
+boTrend     = input.int(200, 'N-day: trend SMA',       minval = 1, group = gX)
+boUseVol    = input.bool(true, 'N-day: require volume expansion',      group = gX)
+boUseTrend  = input.bool(true, 'N-day: require close above trend SMA', group = gX)
+
+// Per-method colour — used for BOTH the painted bar and the label background.
+// (Pine `barcolor()` colours can't live in the Style tab, so they are here.)
+gBC = 'Breakout Candle'
+bcTopPct   = input.float(30, 'Close must be in top X% of the bar range', minval = 1, maxval = 100, group = gBC, tooltip = 'Book rule: close within the top 30% of the candle range.')
+bcNeedVol  = input.bool(false, 'Require volume >= average volume', group = gBC, tooltip = 'Book rule: closing volume >= average. On the forming bar volume is still partial, so this can lag intraday.')
+bcVolLen   = input.int(50, 'Average volume length', minval = 1, group = gBC)
+bcNeedEma  = input.bool(false, 'Require 4 EMA (Close) ticking up', group = gBC, tooltip = 'Book rule for continuation breakouts: the 4 EMA must be rising.')
+
+gVB = 'VTG Breakout Signal (Old / New)'
+// OLD — minimal base: 4/9 EMA compression + tight last candle, then expansion.
+vbOldFast   = input.int(4,     'Old: fast EMA',                     minval = 1, group = gVB)
+vbOldSlow   = input.int(9,     'Old: slow EMA',                     minval = 1, group = gVB)
+vbOldCompK  = input.float(0.5, 'Old: base 4/9 EMA gap <= (x ATR)',  minval = 0, step = 0.05, group = gVB, tooltip = 'EMA compression: on the bar before the breakout, |fast EMA - slow EMA| must be at most this many ATR.')
+vbOldTightK = input.float(0.8, 'Old: base candle range <= (x ATR)', minval = 0, step = 0.05, group = gVB, tooltip = 'Tight last candle: the bar before the breakout has a range of at most this many ATR.')
+vbOldNeedHi = input.bool(true, 'Old: require close above prior high', group = gVB, tooltip = 'Direction filter so the expansion bar is an up-breakout. Uses the global confirmation rule (close / full body / live preview).')
+// NEW — qualify the base first, then detect the breakout.
+vbNewEmaLen = input.int(21,    'New: trend EMA length',                 minval = 1, group = gVB)
+vbBaseLen   = input.int(3,     'New: base length (bars, min)',          minval = 2, group = gVB, tooltip = 'The base is the last N bars before the breakout bar ("3+ day base"). A longer base also passes — its last N bars are a base too.')
+vbTightK    = input.float(1.0, 'New: base closes span <= (x ATR)',      minval = 0, step = 0.05, group = gVB, tooltip = 'Tight, controlled closes: highest close - lowest close in the base is at most this many ATR.')
+vbNearK     = input.float(1.0, 'New: base low within (x ATR) of EMA',   minval = 0, step = 0.05, group = gVB, tooltip = 'Pullback toward the 21 EMA: the lowest low of the base came within this many ATR of the EMA.')
+vbUnderK    = input.float(0.25,'New: closes may undercut EMA by (x ATR)',minval = 0, step = 0.05, group = gVB, tooltip = 'Every base close must hold above the EMA minus this many ATR (0 = strictly above).')
+vbTopPct    = input.float(30,  'New: close in top X% of breakout bar',  minval = 1, maxval = 100, group = gVB)
+vbVolMult   = input.float(1.0, 'New: volume >= (x average)',            minval = 0, step = 0.1, group = gVB, tooltip = '0 disables the volume check. On the forming bar volume is still partial, so this can lag intraday.')
+vbVolLen    = input.int(50,    'New: average volume length',            minval = 1, group = gVB)
+vbBoxShow   = input.bool(true,  'New: draw the qualified base box', group = gVB)
+vbShowEmas  = input.bool(false, 'Old: show 4 / 9 EMA lines on chart', group = gVB)
+
+gCol = 'Trigger colours'
+colSling  = input.color(#26a69a,       'Slingshot',            group = gCol)
+col4EmaCloseX = input.color(#ab47bc,   '4 EMA Close Cross',       group = gCol)
+colSlingClose = input.color(#7e57c2,   'Slingshot (4 EMA Close)', group = gCol)
+colBreak  = input.color(#00897b,       'Breakout (composite)', group = gCol)
+colPre    = input.color(color.yellow,  'Pre-Slingshot',        group = gCol)
+col4pct   = input.color(#64dd17,       '4% Breakout',          group = gCol)
+colInside = input.color(#5c6bc0,       'Inside Day',           group = gCol)
+colIdBo   = input.color(#00bcd4,       'Inside Day Breakout',  group = gCol)
+colOops   = input.color(#ff9800,       'Oops Reversal',        group = gCol)
+colSuper  = input.color(#f57c00,       'Super Oops',           group = gCol)
+colOel    = input.color(#26a69a,       'OEL',                  group = gCol)
+colOeh    = input.color(#ef5350,       'OEH',                  group = gCol)
+colAtrOv  = input.color(#ffa726,       'ATR 100%+',            group = gCol)
+colAtrUn  = input.color(#9e9e9e,       'ATR < 100%',           group = gCol)
+colKick   = input.color(#26a69a,       'Kicker',               group = gCol)
+col3Bar   = input.color(#26a69a,       '3-Bar Break',          group = gCol)
+colEng    = input.color(#9e9e9e,       'Engulf',               group = gCol)
+colBoCandle = input.color(#00e676,     'Breakout Candle',      group = gCol)
+colVbOld  = input.color(#2962ff,       'VTG Breakout (Old)',   group = gCol)
+colVbNew  = input.color(#2e7d32,       'VTG Breakout (New)',   group = gCol)
+colNday   = input.color(#00897b,       'N-day High Breakout',  group = gCol)
+colMulti  = input.color(color.fuchsia, 'Multiple Triggers (2+, magenta)', group = gCol, tooltip = 'Bar colour and merged label colour whenever 2 or more selected triggers fire on the same bar — overrides the individual trigger colours above so a multi-trigger bar is always visually distinct.')
+
+gLn = 'Line colours'
+colLnSling      = input.color(color.orange, '4 EMA High line',  group = gLn)
+colLnSlingClose = input.color(color.purple, '4 EMA Close line', group = gLn)
+colLnEma        = input.color(color.green,  'EMA line',         group = gLn)
+colLnSma        = input.color(color.red,    'SMA line',         group = gLn)
+colLnVbFast     = input.color(color.blue,   'Old: fast EMA line', group = gLn)
+colLnVbSlow     = input.color(color.red,    'Old: slow EMA line', group = gLn)
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Engine
+// ═════════════════════════════════════════════════════════════════════════════
+slingEma      = ta.ema(slingEmaSrc == 'High' ? high : close, slingEmaLen)
+slingEmaClose = ta.ema(close, slingEmaLen)   // always Close-based, independent of slingEmaSrc — feeds the two Close variants below
+emaLine = ta.ema(close, emaLineLen)
+sma     = ta.sma(close, smaLen)
+emaHi   = ta.ema(high,  cloudLen)
+emaLo   = ta.ema(low,   cloudLen)
+atr     = ta.atr(atrLen)
+
+// Extension / range math.  KEEP IN SYNC with visual_vtgAtr.pine (d21 / d50 /
+// anchLow / dayExp / bodyExp there) so the screener column == the ATR table cell.
+ext21      = atr != 0 ? (close - emaLine) / atr : na
+ext50      = atr != 0 ? (close - sma)     / atr : na
+extLow     = atr != 0 ? (close - low)     / atr : na     // ATR from the day's low
+dayMovePct = close[1] != 0 ? (close - close[1]) / close[1] * 100 : na
+atrMove    = atr != 0 ? math.abs(close - close[1]) / atr : na
+dollarVolM = close * volume / 1e6
+
+// Range / body expansion vs the prior bar (the s-VTG ATR table metrics).
+rng        = high - low
+bdy        = math.abs(close - open)
+dayExp     = rng[1] != 0 ? (rng / rng[1] - 1) * 100 : na
+bodyExp    = bdy[1] != 0 ? (bdy / bdy[1] - 1) * 100 : na
+
+// ── Confirmation helpers — one policy for every level-break signal.
+//    Closed bars: CLOSE (or whole body) must be beyond the level; a wick that
+//    pierces then fades back does not count and is never kept in history.
+//    Forming bar (livePreview on): tentative on the wick, removed on close if not
+//    confirmed — repaints on the current bar only.
+f_confUp(float lvl) =>
+    confirmed = (confirmBody ? math.min(open, close) : close) > lvl
+    livePreview and not barstate.isconfirmed ? high > lvl : confirmed
+
+f_confDn(float lvl) =>
+    confirmed = (confirmBody ? math.max(open, close) : close) < lvl
+    livePreview and not barstate.isconfirmed ? low < lvl : confirmed
+
+// ── Slingshot — pullback then reclaim of the fast EMA.
+//    Pullback: each of the last `slingBars` bars had its <slingPbSrc> below the
+//    EMA value AT THAT BAR (Close = exact TAPLOT chain).
+slingPbVal = slingPbSrc == 'High' ? high : close
+pulledBack = ta.highest(slingPbVal - slingEma, slingBars)[1] < 0
+slingshot  = pulledBack and f_confUp(slingEma)
+
+// ── 4 EMA Close Cross — simple cross of the Close-based 4 EMA, no pullback
+//    required. Looser and fires earlier than Slingshot.
+ema4CloseCross = f_confUp(slingEmaClose) and close[1] <= slingEmaClose[1]
+
+// ── Slingshot (4 EMA Close) — identical pullback-then-reclaim structure to
+//    Slingshot above, tested against the Close-based 4 EMA instead of High.
+pulledBackClose = ta.highest(slingPbVal - slingEmaClose, slingBars)[1] < 0
+slingshotClose  = pulledBackClose and f_confUp(slingEmaClose)
+
+// ── Breakout Candle (Oliver Wiedmaier's book, continuation breakout / EP delayed
+//    entry signal) — LIVE: no confirmation gate, evaluated on every tick of the
+//    forming bar with the current close/high/low, so it can appear and disappear
+//    until the bar closes (repaints the forming bar only).
+bcRange   = high - low
+bcTopOk   = bcRange > 0 and (close - low) / bcRange >= 1 - bcTopPct / 100
+boCandle  = close > high[1] and bcRange > (high[1] - low[1]) and bcTopOk
+             and (not bcNeedVol or volume >= ta.sma(volume, bcVolLen))
+             and (not bcNeedEma or slingEmaClose > slingEmaClose[1])
+
+// ── VTG Breakout Signal — OLD vs NEW (Voyage "VTG Breakout Signal: Old vs New").
+//    Two independent triggers; enable either or both at once.
+//    OLD: minimal base input — 4/9 EMA compression + tight last candle, then
+//         EMA expansion + range expands vs prior day + rising ATR.
+//    NEW: qualify a 3+ bar base first (pullback toward a rising 21 EMA, tight
+//         closes, ATR decreasing), then a breakout candle over the base high
+//         with a strong close + volume + rising ATR.
+vbEmaF    = ta.ema(close, vbOldFast)
+vbEmaS    = ta.ema(close, vbOldSlow)
+vbSpread  = vbEmaF - vbEmaS
+vbOldBase = math.abs(vbSpread[1]) <= vbOldCompK * atr[1] and (high[1] - low[1]) <= vbOldTightK * atr[1]
+vbOldBO   = vbOldBase and vbSpread > 0 and vbSpread > vbSpread[1]
+             and (high - low) > (high[1] - low[1]) and atr > atr[1]
+             and (not vbOldNeedHi or f_confUp(high[1]))
+
+vbEma21   = ta.ema(close, vbNewEmaLen)
+vbBaseHi  = ta.highest(high, vbBaseLen)
+vbBaseLo  = ta.lowest(low, vbBaseLen)
+vbClsSpan = ta.highest(close, vbBaseLen) - ta.lowest(close, vbBaseLen)
+vbMinCls  = ta.lowest(close - vbEma21, vbBaseLen)   // closes hold the EMA
+vbMinLow  = ta.lowest(low - vbEma21, vbBaseLen)     // lows pulled back toward it
+vbVolAvg  = ta.sma(volume, vbVolLen)
+// Base qualified on the bars ending HERE; the breakout reads the base ending on the prior bar.
+vbBase    = vbClsSpan <= vbTightK * atr and vbMinCls >= -vbUnderK * atr and vbMinLow <= vbNearK * atr
+             and vbEma21 > vbEma21[vbBaseLen] and atr < atr[vbBaseLen]
+vbNewRng  = high - low
+vbNewBO   = vbBase[1] and f_confUp(vbBaseHi[1])
+             and vbNewRng > 0 and (close - low) / vbNewRng >= 1 - vbTopPct / 100
+             and volume >= vbVolMult * vbVolAvg and atr > atr[1]
+
+// ── Pre-Slingshot — below the short EMA, uptrend intact, coiled near the trigger
+trendUp  = slingEma > slingEma[preTrendLook]
+preSling = close < slingEma and trendUp and (slingEma - close) <= preNearK * atr and not slingshot
+
+// ── 4% Breakout — range-expansion day, ATR ceiling filter
+fourPct = not na(dayMovePct) and dayMovePct >= pctThresh and atr < atrMax
+
+// ── Inside day + inside-day breakout
+//    Inside day: today's range fully inside yesterday's (the coil).
+//    Breakout: price clears that inside day's high/low within `idBoWindow` bars.
+insideDay = high < high[1] and low > low[1]
+
+var float idHi   = na
+var float idLo   = na
+var int   idBar  = na       // bar_index of the inside day being tracked
+var bool  idOpen = false    // a coil is still waiting to resolve
+
+if insideDay
+    idHi   := high
+    idLo   := low
+    idBar  := bar_index
+    idOpen := true
+
+idBarsSince = na(idBar) ? na : bar_index - idBar
+idInWindow  = idOpen and not na(idBarsSince) and idBarsSince >= 1 and idBarsSince <= idBoWindow
+
+idBreakUp = idInWindow and f_confUp(idHi)
+idBreakDn = idInWindow and f_confDn(idLo)
+
+if idBreakUp or idBreakDn or (not na(idBarsSince) and idBarsSince > idBoWindow)
+    idOpen := false
+
+// ── Display scope ("Show triggers on") — gates paint, labels, lines, boxes.
+//    scopeN = 0 means all history. On historical bars `last_bar_index` is the
+//    chart's last bar, so out-of-window drawings are simply never created. In
+//    realtime the window slides forward, so each drawing is tracked with the
+//    bar that created it and deleted once it falls out of the window.
+scopeN  = showOn == 'All bars' ? 0 : showOn == 'Current bar only' ? 1 : showLastN
+inScope = scopeN == 0 or last_bar_index - bar_index < scopeN
+
+type Scoped
+    int   bar
+    label lbl
+    line  ln
+    box   bx
+
+var scoped = array.new<Scoped>()
+
+if scopeN > 0
+    while scoped.size() > 0 and bar_index - scoped.first().bar >= scopeN
+        s = scoped.shift()
+        label.delete(s.lbl)
+        line.delete(s.ln)
+        box.delete(s.bx)
+
+// black horizontal line at the level that broke — short segment (capped so it
+// doesn't clutter), drawn on every breakout within the "Show triggers on" scope.
+if showInsideBO and idLineShow and (idBreakUp or idBreakDn) and inScope
+    lvl = idBreakUp ? idHi : idLo
+    x2  = math.min(bar_index + 1, idBar + idLineLen)
+    ln  = line.new(idBar, lvl, x2, lvl, color = idLineColor, width = 2, extend = extend.none)
+    if scopeN > 0
+        scoped.push(Scoped.new(bar_index, na, ln, na))
+
+// ── Oops reversal (Larry Williams) — gap outside prior range, then reclaim it
+oopsUp = open < low[1]  and f_confUp(low[1])
+oopsDn = open > high[1] and f_confDn(high[1])
+
+// ── OEL / OEH
+tol       = oelTicks * syminfo.mintick
+oelBase   = open <= low + tol
+oelStrong = oelBase and open > close[1] and open > math.max(open[1], close[1]) and open < high[1]
+oel       = oelGapOnly ? oelStrong : oelBase
+oeh       = open >= high - tol
+
+// ── ATR context filters (day move vs ATR)
+atrOver100  = not na(atrMove) and atrMove >= 1.0
+atrUnder100 = not na(atrMove) and atrMove <  1.0
+
+// ── Extras (Kicker + 3-Bar Break match indicators/dashboard/dashboard.pine)
+// ta.* calls pulled out of the conditional expressions below (CW10002) — a
+// ta.* call inside an and/or short-circuit may not run every bar, which is
+// unsafe for functions that depend on their own history.
+hi3       = ta.highest(high[1], 3)
+lo3       = ta.lowest(low[1], 3)
+hiNday    = ta.highest(high, boPrice)[1]
+volHiNday = ta.highest(volume, boVol)[1]
+trendSma  = ta.sma(close, boTrend)
+
+superOops = open < low[1] and f_confUp(high[1])
+kicker    = close[1] < open[1] and open > open[1]                        // prior bar bearish, today opens above prior open
+b3Up      = high[1] < high[3] and f_confUp(hi3)                          // recent lower high, then close clears last 3 highs
+b3Dn      = low[1]  > low[3]  and f_confDn(lo3)                          // recent higher low,  then close breaks last 3 lows
+engulf    = high > high[1] and low < low[1]
+ndayBO    = f_confUp(hiNday) and (not boUseVol or volume > volHiNday) and (not boUseTrend or close > trendSma)
+
+// ── Composite "Breakout Triggered"
+breakoutEdges = slingshot or fourPct or idBreakUp or oel
+breakoutTrig  = compUnder1Atr ? (breakoutEdges and atrUnder100) : breakoutEdges
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Visual layer — EMA cloud + MA lines
+// ═════════════════════════════════════════════════════════════════════════════
+// Screener copy: chart-line plots removed (64-plot budget goes to the trigger
+// columns below). Use s-VTG Combo for the lines.
+
+// qualified base box behind every New breakout (within "Show triggers on" scope, like the ID line)
+if (showAllTriggers or showVbNew) and vbBoxShow and vbNewBO and inScope
+    bx = box.new(bar_index - vbBaseLen, vbBaseHi[1], bar_index - 1, vbBaseLo[1], border_color = colVbNew, bgcolor = color.new(colVbNew, 85))
+    if scopeN > 0
+        scoped.push(Scoped.new(bar_index, na, na, bx))
+
+// ── Merge every firing trigger into ONE tag + ONE colour per bar.
+//    Why not stack one label per trigger (the old approach): that used
+//    ATR-based vertical offsets, but label height is fixed in PIXELS while
+//    the offset is in PRICE units — depending on the chart's y-axis zoom/
+//    autoscale, the same ATR gap can render as a wide gap or almost nothing,
+//    so stacked labels can still overlap in practice. A single merged label
+//    per bar removes the stacking problem entirely, and this same builder
+//    also drives the bar colour so the two can never disagree.
+labelOK  = showLabels and inScope
+labelGap = input.float(0.4, 'Label offset above the bar (× ATR)', minval = 0.05, group = gCol)
+gapY     = nz(atr, close * 0.02) * labelGap
+
+f_txt(color bg) =>
+    lum = 0.299 * color.r(bg) + 0.587 * color.g(bg) + 0.114 * color.b(bg)
+    labelTextAuto ? (lum > 150 ? color.black : color.white) : color.white
+
+// Builds (tag, colour-of-first-fired, count) across every condition that
+// fired, in priority order. Plain if-blocks at script scope reassigning
+// these vars with `:=` — same pattern as `idHi := high` above.
+string fireTag   = na
+color  fireCol   = na
+int    fireCount = 0
+
+if (showAllTriggers or showSlingshot) and slingshot
+    fireTag   := na(fireTag) ? 'Slingshot' : fireTag + ' + Slingshot'
+    fireCol   := na(fireCol) ? colSling : fireCol
+    fireCount += 1
+if (showAllTriggers or show4EmaCloseX) and ema4CloseCross
+    fireTag   := na(fireTag) ? '4EMA Close X' : fireTag + ' + 4EMA Close X'
+    fireCol   := na(fireCol) ? col4EmaCloseX : fireCol
+    fireCount += 1
+if (showAllTriggers or showSlingClose) and slingshotClose
+    fireTag   := na(fireTag) ? 'Slingshot (Close)' : fireTag + ' + Slingshot (Close)'
+    fireCol   := na(fireCol) ? colSlingClose : fireCol
+    fireCount += 1
+if (showAllTriggers or showBreakout) and breakoutTrig
+    fireTag   := na(fireTag) ? 'Breakout' : fireTag + ' + Breakout'
+    fireCol   := na(fireCol) ? colBreak : fireCol
+    fireCount += 1
+if (showAllTriggers or showPreSling) and preSling
+    fireTag   := na(fireTag) ? 'Pre-Slingshot' : fireTag + ' + Pre-Slingshot'
+    fireCol   := na(fireCol) ? colPre : fireCol
+    fireCount += 1
+if (showAllTriggers or showBoCandle) and boCandle
+    fireTag   := na(fireTag) ? 'Breakout Candle' : fireTag + ' + Breakout Candle'
+    fireCol   := na(fireCol) ? colBoCandle : fireCol
+    fireCount += 1
+if (showAllTriggers or showVbOld) and vbOldBO
+    fireTag   := na(fireTag) ? 'VTG BO Old' : fireTag + ' + VTG BO Old'
+    fireCol   := na(fireCol) ? colVbOld : fireCol
+    fireCount += 1
+if (showAllTriggers or showVbNew) and vbNewBO
+    fireTag   := na(fireTag) ? 'VTG BO New' : fireTag + ' + VTG BO New'
+    fireCol   := na(fireCol) ? colVbNew : fireCol
+    fireCount += 1
+if (showAllTriggers or show4pct) and fourPct
+    fireTag   := na(fireTag) ? '4%' : fireTag + ' + 4%'
+    fireCol   := na(fireCol) ? col4pct : fireCol
+    fireCount += 1
+if (showAllTriggers or showInsideBO) and idBreakUp
+    fireTag   := na(fireTag) ? 'ID Break+' : fireTag + ' + ID Break+'
+    fireCol   := na(fireCol) ? colIdBo : fireCol
+    fireCount += 1
+if (showAllTriggers or showInsideBO) and idBreakDn
+    fireTag   := na(fireTag) ? 'ID Break-' : fireTag + ' + ID Break-'
+    fireCol   := na(fireCol) ? colIdBo : fireCol
+    fireCount += 1
+if (showAllTriggers or showInsideDay) and insideDay
+    fireTag   := na(fireTag) ? 'Inside' : fireTag + ' + Inside'
+    fireCol   := na(fireCol) ? colInside : fireCol
+    fireCount += 1
+if (showAllTriggers or showOops) and oopsUp
+    fireTag   := na(fireTag) ? 'Oops+' : fireTag + ' + Oops+'
+    fireCol   := na(fireCol) ? colOops : fireCol
+    fireCount += 1
+if (showAllTriggers or showOops) and oopsDn
+    fireTag   := na(fireTag) ? 'Oops-' : fireTag + ' + Oops-'
+    fireCol   := na(fireCol) ? colOops : fireCol
+    fireCount += 1
+if (showAllTriggers or showSuperOops) and superOops
+    fireTag   := na(fireTag) ? 'Super Oops' : fireTag + ' + Super Oops'
+    fireCol   := na(fireCol) ? colSuper : fireCol
+    fireCount += 1
+if (showAllTriggers or showOEL) and oel
+    fireTag   := na(fireTag) ? 'OEL' : fireTag + ' + OEL'
+    fireCol   := na(fireCol) ? colOel : fireCol
+    fireCount += 1
+if (showAllTriggers or showOEH) and oeh
+    fireTag   := na(fireTag) ? 'OEH' : fireTag + ' + OEH'
+    fireCol   := na(fireCol) ? colOeh : fireCol
+    fireCount += 1
+if (showAllTriggers or showKicker) and kicker
+    fireTag   := na(fireTag) ? 'Kicker' : fireTag + ' + Kicker'
+    fireCol   := na(fireCol) ? colKick : fireCol
+    fireCount += 1
+if (showAllTriggers or show3Bar) and b3Up
+    fireTag   := na(fireTag) ? '3Bar+' : fireTag + ' + 3Bar+'
+    fireCol   := na(fireCol) ? col3Bar : fireCol
+    fireCount += 1
+if (showAllTriggers or show3Bar) and b3Dn
+    fireTag   := na(fireTag) ? '3Bar-' : fireTag + ' + 3Bar-'
+    fireCol   := na(fireCol) ? col3Bar : fireCol
+    fireCount += 1
+if (showAllTriggers or showEngulf) and engulf
+    fireTag   := na(fireTag) ? 'Engulf' : fireTag + ' + Engulf'
+    fireCol   := na(fireCol) ? colEng : fireCol
+    fireCount += 1
+if (showAllTriggers or showNdayBO) and ndayBO
+    ndayTxt = 'BO ' + str.tostring(boPrice) + 'd'
+    fireTag   := na(fireTag) ? ndayTxt : fireTag + ' + ' + ndayTxt
+    fireCol   := na(fireCol) ? colNday : fireCol
+    fireCount += 1
+if (showAllTriggers or showAtrOver) and atrOver100
+    fireTag   := na(fireTag) ? 'ATR 100%+' : fireTag + ' + ATR 100%+'
+    fireCol   := na(fireCol) ? colAtrOv : fireCol
+    fireCount += 1
+if (showAllTriggers or showAtrUnder) and atrUnder100
+    fireTag   := na(fireTag) ? 'ATR < 100%' : fireTag + ' + ATR < 100%'
+    fireCol   := na(fireCol) ? colAtrUn : fireCol
+    fireCount += 1
+
+isMulti = fireCount >= 2
+sigCol  = isMulti ? colMulti : fireCol   // 0 fired -> na, 1 -> its own colour, 2+ -> colMulti
+
+// ── Paint the trigger bar (single barcolor, like TAPLOT). Independent of labels;
+//    limited to the "Show triggers on" scope.
+// Screener copy: barcolor removed (64-plot budget) — labels still show the triggers.
+
+// ── Trigger label — ONE label per bar: every fired trigger's name joined with
+//    " + ", coloured colMulti when 2+ fired (always matches the bar colour),
+//    else the single trigger's own colour. Limited to the "Show triggers on" scope.
+if labelOK and not na(fireTag)
+    lblCol = isMulti ? colMulti : fireCol
+    lb = label.new(bar_index, high + gapY, fireTag, yloc = yloc.price, style = label.style_label_down, color = color.new(lblCol, 0), textcolor = f_txt(lblCol), size = size.small)
+    if scopeN > 0
+        scoped.push(Scoped.new(bar_index, lb, na, na))
+
+// ── ATR-extension table
+posConst = switch tablePos
+    'Top Left'     => position.top_left
+    'Top Right'    => position.top_right
+    'Bottom Left'  => position.bottom_left
+    'Bottom Right' => position.bottom_right
+    => position.bottom_left
+
+f_extTxt(float v) => na(v) ? 'n/a' : str.tostring(v, '0.00') + ' ATR'
+f_extCol(float v) => na(v) ? color.gray : v >= 0 ? color.lime : color.red
+
+var table extTab = table.new(posConst, 1, 3, bgcolor = color.new(#b8860b, 15), border_color = color.new(color.gray, 60), border_width = 1)
+if barstate.islast and showExtTable
+    table.cell(extTab, 0, 0, 'Extension', text_color = color.white, text_size = size.small, bgcolor = color.new(#b8860b, 0))
+    table.cell(extTab, 0, 1, str.tostring(emaLineLen) + ' EMA: ' + f_extTxt(ext21), text_color = f_extCol(ext21), text_size = size.small)
+    table.cell(extTab, 0, 2, str.tostring(smaLen) + ' SMA: ' + f_extTxt(ext50), text_color = f_extCol(ext50), text_size = size.small)
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Alerts + screener trigger filters — one alertcondition() per trigger. They
+// feed TradingView's alert dialog AND show as Pine Screener filter chips (the
+// only way triggers are screened now — no 1/0 trigger columns, see below).
+// Not gated by the "Show *" switches.
+// ═════════════════════════════════════════════════════════════════════════════
+alertcondition(slingshot,       'Slingshot Triggered',              'VTG: Slingshot {{ticker}}')
+alertcondition(ema4CloseCross,  '4 EMA Close Cross Triggered',      'VTG: 4 EMA Close Cross {{ticker}}')
+alertcondition(slingshotClose,  'Slingshot (4 EMA Close) Triggered','VTG: Slingshot Close {{ticker}}')
+alertcondition(breakoutTrig, 'Breakout Triggered',             'VTG: Breakout {{ticker}}')
+alertcondition(boCandle,     'Breakout Candle Triggered',      'VTG: Breakout Candle {{ticker}}')
+alertcondition(vbOldBO,      'VTG Breakout (Old) Triggered',   'VTG: Breakout Old {{ticker}}')
+alertcondition(vbNewBO,      'VTG Breakout (New) Triggered',   'VTG: Breakout New {{ticker}}')
+alertcondition(vbBase,       'VTG Base (New) Qualified',       'VTG: Base qualified {{ticker}}')
+alertcondition(fourPct,      '4% Breakout Triggered',          'VTG: 4% Breakout {{ticker}}')
+alertcondition(preSling,     'Pre-Slingshot Triggered',        'VTG: Pre-Slingshot {{ticker}}')
+alertcondition(insideDay,    'Inside Day Triggered',           'VTG: Inside Day {{ticker}}')
+alertcondition(idBreakUp,    'Inside Day Breakout Triggered',  'VTG: Inside Day Breakout {{ticker}}')
+alertcondition(idBreakDn,    'Inside Day Breakdown Triggered', 'VTG: Inside Day Breakdown {{ticker}}')
+alertcondition(oopsUp,       'Oops Reversal',                  'VTG: Oops Reversal {{ticker}}')
+alertcondition(oopsDn,       'Oops Reversal (bear)',           'VTG: Oops Reversal bear {{ticker}}')
+alertcondition(superOops,    'Super Oops',                     'VTG: Super Oops {{ticker}}')
+alertcondition(oel,          'OEL Triggered',                  'VTG: OEL {{ticker}}')
+alertcondition(oeh,          'OEH Triggered',                  'VTG: OEH {{ticker}}')
+alertcondition(atrOver100,   'ATR 100%+',                      'VTG: ATR 100%+ {{ticker}}')
+alertcondition(atrUnder100,  'ATR < 100%',                     'VTG: ATR < 100% {{ticker}}')
+alertcondition(kicker,       'Kicker',                         'VTG: Kicker {{ticker}}')
+alertcondition(b3Up,         '3-Bar Break Up',                 'VTG: 3-Bar Break Up {{ticker}}')
+alertcondition(b3Dn,         '3-Bar Break Down',               'VTG: 3-Bar Break Down {{ticker}}')
+alertcondition(engulf,       'Engulf',                         'VTG: Engulf {{ticker}}')
+alertcondition(ndayBO,       'N-day High Breakout',            'VTG: N-day High Breakout {{ticker}}')
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Pine Screener columns.
+//
+// Triggers are NOT columns — they are screened via the alertcondition() filter
+// chips above (e.g. "Slingshot Triggered"), which filter on the last bar exactly
+// like a 1/0 column would. The old 1/0 trigger plot() columns were removed
+// (2026-09-28): together with the alertconditions they exceeded Pine's 64-plot
+// limit (alertcondition counts toward it). Reference copy of the old version:
+// ORIG_visual_vtgCombo.pine.
+//
+// Metrics stay as plot() columns — only plot() outputs populate the screener's
+// "Manage columns" list (plotchar/plotshape are unreliable as columns).
+// display.none keeps them off the chart; editable=false keeps them out of the
+// Style tab. Not gated by the "Show *" switches — always available in the screener.
+//
+// After editing this block you MUST re-add the indicator in the Pine Screener
+// (remove s-VTG Combo, add it again) and press Scan — it caches the old columns.
+// ═════════════════════════════════════════════════════════════════════════════
+
+// ── Metric columns (range / sortable) ───────────────────────────────────────
+//    ext21 / ext50 / extLow / dayExp / bodyExp mirror the s-VTG ATR table so
+//    you can filter "trigger fired AND not overextended" in one screener pass,
+//    e.g.  Slingshot Triggered   AND   21 EMA (ATR) < 3   AND   Day Range Exp % > 0
+plot(ext21,      '21 EMA (ATR)',     display = display.none, editable = false)
+plot(ext50,      '50 SMA (ATR)',     display = display.none, editable = false)
+plot(extLow,     'Low (ATR)',        display = display.none, editable = false)
+plot(dayExp,     'Day Range Exp %',  display = display.none, editable = false)
+plot(bodyExp,    'Body Range Exp %', display = display.none, editable = false)
+plot(atrMove,    'Move / ATR',       display = display.none, editable = false)
+plot(dayMovePct, 'Chg 1D %',         display = display.none, editable = false)
+plot(dollarVolM, '$ Vol (M)',        display = display.none, editable = false)
+plot(close,      'Price',            display = display.none, editable = false)
+
+// ── Trigger columns (screener copy only) ────────────────────────────────────
+//    1 = fired on the last bar, 0 = not. Add them via "Manage columns" to SEE
+//    which conditions fired next to each symbol; filter "> 0" / sort desc.
+//    "T: " prefix keeps them grouped in the column list and avoids clashing
+//    with the alertcondition chip titles. Not gated by the "Show *" switches.
+//    Plot budget: 25 alertconditions + 9 metrics + 26 here = 60 / 64.
+plot(slingshot      ? 1 : 0, 'T: Slingshot',               display = display.none, editable = false)
+plot(ema4CloseCross ? 1 : 0, 'T: 4 EMA Close Cross',       display = display.none, editable = false)
+plot(slingshotClose ? 1 : 0, 'T: Slingshot (4 EMA Close)', display = display.none, editable = false)
+plot(breakoutTrig   ? 1 : 0, 'T: Breakout',                display = display.none, editable = false)
+plot(boCandle       ? 1 : 0, 'T: Breakout Candle',         display = display.none, editable = false)
+plot(vbOldBO        ? 1 : 0, 'T: VTG Breakout Old',        display = display.none, editable = false)
+plot(vbNewBO        ? 1 : 0, 'T: VTG Breakout New',        display = display.none, editable = false)
+plot(vbBase         ? 1 : 0, 'T: VTG Base (New)',          display = display.none, editable = false)
+plot(fourPct        ? 1 : 0, 'T: 4% Breakout',             display = display.none, editable = false)
+plot(preSling       ? 1 : 0, 'T: Pre-Slingshot',           display = display.none, editable = false)
+plot(insideDay      ? 1 : 0, 'T: Inside Day',              display = display.none, editable = false)
+plot(idBreakUp      ? 1 : 0, 'T: Inside Day Breakout',     display = display.none, editable = false)
+plot(idBreakDn      ? 1 : 0, 'T: Inside Day Breakdown',    display = display.none, editable = false)
+plot(oopsUp         ? 1 : 0, 'T: Oops Reversal',           display = display.none, editable = false)
+plot(oopsDn         ? 1 : 0, 'T: Oops Reversal (bear)',    display = display.none, editable = false)
+plot(superOops      ? 1 : 0, 'T: Super Oops',              display = display.none, editable = false)
+plot(oel            ? 1 : 0, 'T: OEL',                     display = display.none, editable = false)
+plot(oeh            ? 1 : 0, 'T: OEH',                     display = display.none, editable = false)
+plot(atrOver100     ? 1 : 0, 'T: ATR 100%+',               display = display.none, editable = false)
+plot(atrUnder100    ? 1 : 0, 'T: ATR < 100%',              display = display.none, editable = false)
+plot(kicker         ? 1 : 0, 'T: Kicker',                  display = display.none, editable = false)
+plot(b3Up           ? 1 : 0, 'T: 3-Bar Break Up',          display = display.none, editable = false)
+plot(b3Dn           ? 1 : 0, 'T: 3-Bar Break Down',        display = display.none, editable = false)
+plot(engulf         ? 1 : 0, 'T: Engulf',                  display = display.none, editable = false)
+plot(ndayBO         ? 1 : 0, 'T: N-day High Breakout',     display = display.none, editable = false)
+
+// ── How many of the triggers above fired on the last bar (sort desc to see
+//    the multi-trigger names first).
+trigCount = (slingshot ? 1 : 0) + (ema4CloseCross ? 1 : 0) + (slingshotClose ? 1 : 0) + (breakoutTrig ? 1 : 0) + (boCandle ? 1 : 0) + (vbOldBO ? 1 : 0) + (vbNewBO ? 1 : 0) + (vbBase ? 1 : 0) + (fourPct ? 1 : 0) + (preSling ? 1 : 0) + (insideDay ? 1 : 0) + (idBreakUp ? 1 : 0) + (idBreakDn ? 1 : 0) + (oopsUp ? 1 : 0) + (oopsDn ? 1 : 0) + (superOops ? 1 : 0) + (oel ? 1 : 0) + (oeh ? 1 : 0) + (atrOver100 ? 1 : 0) + (atrUnder100 ? 1 : 0) + (kicker ? 1 : 0) + (b3Up ? 1 : 0) + (b3Dn ? 1 : 0) + (engulf ? 1 : 0) + (ndayBO ? 1 : 0)
+plot(trigCount, '# Triggers', display = display.none, editable = false)
