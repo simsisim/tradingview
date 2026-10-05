@@ -1,0 +1,245 @@
+//@version=6
+// 5-Day Moving Average (intraday) — RTH and ETH lines
+//
+// Plain SMA (not smoothed) whose length spans N trading days on any intraday chart:
+//     period = session minutes ÷ chart timeframe (min) × days
+// Examples (5 days):  3 min  RTH 390 ÷ 3 × 5 = 650   |  ETH 960 ÷ 3 × 5 = 1600
+//                     15 min RTH 390 ÷ 15 × 5 = 130  |  ETH 960 ÷ 15 × 5 = 320
+//
+// Two independent lines, each calculated from its own session's data, so both are
+// available and identical whether the chart shows regular or extended hours:
+//   RTH line — regular-hours bars only (Brian Shannon's 390 min/day definition).
+//              On an extended-hours chart it stays flat through pre/post market.
+//   ETH line — pre + regular + post-market bars (960 min/day for US stocks).
+// "Measured from data" counts the bars that really printed in the last N sessions, which
+// handles half days, thin pre/post-market with missing bars, and non-US / 24h markets.
+indicator("5-Day Moving Average · Intraday (RTH/ETH)", shorttitle = "5DMA", overlay = true)
+
+// ───────────────────────────── Inputs
+GRP_CALC = "Calculation"
+src        = input.source(close, "Source", group = GRP_CALC)
+days       = input.int(5, "Days", minval = 1, maxval = 20, group = GRP_CALC)
+periodMode = input.string("Auto (session math)", "Period mode", options = ["Auto (session math)", "Measured from data"], group = GRP_CALC,
+     tooltip = "Auto: session minutes ÷ timeframe × days.\nMeasured: average bars actually printed per session over the last N completed sessions × days.")
+rthMin     = input.int(390, "RTH session length (minutes, not bars)", minval = 1, maxval = 1440, group = GRP_CALC, tooltip = "Length of the regular trading day in MINUTES — the bar count is calculated from it. US 09:30–16:00 = 390. India NSE = 375. Xetra 09:00–17:30 = 510.")
+ethMin     = input.int(960, "ETH session length (minutes, not bars)", minval = 1, maxval = 1440, group = GRP_CALC, tooltip = "Length of the extended trading day in MINUTES — the bar count is calculated from it. US 04:00–20:00 (pre + regular + post) = 960.")
+
+GRP_STYLE = "Lines"
+showRth      = input.bool(true, "RTH 5DMA", inline = "r", group = GRP_STYLE)
+rthUp        = input.color(#2962FF, "Rising", inline = "r", group = GRP_STYLE)
+rthDn        = input.color(#FF6D00, "Falling", inline = "r", group = GRP_STYLE)
+showEth      = input.bool(true, "ETH 5DMA", inline = "e", group = GRP_STYLE)
+ethUp        = input.color(#9C27B0, "Rising", inline = "e", group = GRP_STYLE)
+ethDn        = input.color(#E91E63, "Falling", inline = "e", group = GRP_STYLE)
+colorBySlope = input.bool(true, "Color by slope (otherwise 'Rising' color only)", group = GRP_STYLE)
+lineWidth    = input.int(2, "Line width", minval = 1, maxval = 6, group = GRP_STYLE)
+
+GRP_TBL = "Tables"
+showStats = input.bool(true, "Stats table", group = GRP_TBL)
+statsY    = input.string("top", "  Y", options = ["top", "middle", "bottom"], inline = "st", group = GRP_TBL)
+statsX    = input.string("right", "X", options = ["left", "center", "right"], inline = "st", group = GRP_TBL)
+showSheet = input.bool(true, "Period cheat sheet", group = GRP_TBL)
+sheetY    = input.string("bottom", "  Y", options = ["top", "middle", "bottom"], inline = "sh", group = GRP_TBL)
+sheetX    = input.string("right", "X", options = ["left", "center", "right"], inline = "sh", group = GRP_TBL)
+tblBg     = input.color(#FFFFFF, "Background", inline = "tc", group = GRP_TBL)
+tblTxt    = input.color(#2A2E39, "Text", inline = "tc", group = GRP_TBL)
+tblDiv    = input.color(#B2B5BE, "Divider", inline = "tc", group = GRP_TBL)
+tblHi     = input.color(#FFF3C4, "Highlight", inline = "tc", group = GRP_TBL)
+txtSize   = input.string("Small", "Text size", options = ["Tiny", "Small", "Normal", "Large"], group = GRP_TBL)
+
+// ───────────────────────────── Market / session context
+isFutures  = syminfo.type == "futures"
+is24h      = isFutures or syminfo.type == "crypto" or syminfo.type == "forex" or syminfo.type == "cfd"
+isExtChart = syminfo.session == session.extended
+measured   = periodMode == "Measured from data"
+
+// 24h markets have one session; its length replaces the RTH value
+rthMinEff = isFutures ? 1380 : is24h ? 1440 : rthMin
+tfMin     = timeframe.in_seconds() / 60.0
+
+CAP      = 60000
+DAY_RING = 32
+
+periodFor(float minutes) =>
+    math.max(1, int(math.round(minutes * days / tfMin)))
+
+// Runs inside request.security, so every bar of the requested session is part of the average.
+// Returns [ma, period, measured bars per session].
+calc5dma(float sessMinutes) =>
+    // Bars per session: written into a ring buffer every bar (idempotent, so realtime ticks are safe)
+    var int dayNum   = 0   // day 0 = first (probably partial) session on the chart
+    var int curCount = 0
+    if timeframe.change("1D") and bar_index > 0
+        dayNum   += 1
+        curCount := 0
+    curCount += 1
+    var int[] dayRing = array.new_int(DAY_RING, 0)
+    dayRing.set(dayNum % DAY_RING, curCount)
+
+    float measBars = na
+    completed = dayNum - 1
+    if completed >= 1
+        k   = math.min(days, completed)
+        acc = 0.0
+        cnt = 0
+        for i = 1 to k
+            c = dayRing.get((dayNum - i) % DAY_RING)
+            if c > 0
+                acc += c
+                cnt += 1
+        measBars := cnt > 0 ? acc / cnt : na
+
+    int period = measured and not na(measBars) ? math.max(1, int(math.round(measBars * days))) : periodFor(sessMinutes)
+    period := math.min(period, CAP - 1)
+
+    // Rolling SMA from prefix sums in a ring buffer (period may change between days)
+    var float[] cumRing = array.new_float(CAP, 0.0)
+    var int     n       = 0
+    var float   cum     = 0.0
+    if not na(src)
+        cum += src
+        n   += 1
+        cumRing.set(n % CAP, cum)
+    float ma = na
+    if n >= period
+        base = n == period ? 0.0 : cumRing.get((n - period) % CAP)
+        ma := (cum - base) / period
+    [ma, period, measBars]
+
+rthTicker = ticker.modify(syminfo.tickerid, session = session.regular)
+ethTicker = ticker.modify(syminfo.tickerid, session = session.extended)
+[rthMa, rthPeriod, rthMeas] = request.security(rthTicker, timeframe.period, calc5dma(rthMinEff))
+[ethMa, ethPeriod, ethMeas] = request.security(ethTicker, timeframe.period, calc5dma(ethMin))
+dailySma = request.security(syminfo.tickerid, "1D", ta.sma(src, days))
+
+hasEth  = timeframe.isintraday and not is24h
+rthLine = timeframe.isintraday ? rthMa : dailySma
+ethLine = hasEth ? ethMa : na
+
+risingState(float x) =>
+    var bool up = true
+    if x > x[1]
+        up := true
+    else if x < x[1]
+        up := false
+    up
+
+rthRising = risingState(rthLine)
+ethRising = risingState(ethLine)
+
+plot(showRth ? rthLine : na, "5DMA RTH", color = colorBySlope and not rthRising ? rthDn : rthUp, linewidth = lineWidth)
+plot(showEth ? ethLine : na, "5DMA ETH", color = colorBySlope and not ethRising ? ethDn : ethUp, linewidth = lineWidth)
+
+alertcondition(ta.crossover(close, rthLine), "Price crosses above RTH 5DMA", "{{ticker}} crossed above the RTH 5-day MA")
+alertcondition(ta.crossunder(close, rthLine), "Price crosses below RTH 5DMA", "{{ticker}} crossed below the RTH 5-day MA")
+alertcondition(ta.crossover(close, ethLine), "Price crosses above ETH 5DMA", "{{ticker}} crossed above the ETH 5-day MA")
+alertcondition(ta.crossunder(close, ethLine), "Price crosses below ETH 5DMA", "{{ticker}} crossed below the ETH 5-day MA")
+
+// ───────────────────────────── Tables
+posFrom(string y, string x) =>
+    switch y + "_" + x
+        "top_left"      => position.top_left
+        "top_center"    => position.top_center
+        "top_right"     => position.top_right
+        "middle_left"   => position.middle_left
+        "middle_center" => position.middle_center
+        "middle_right"  => position.middle_right
+        "bottom_left"   => position.bottom_left
+        "bottom_center" => position.bottom_center
+        => position.bottom_right
+
+ts = switch txtSize
+    "Tiny"   => size.tiny
+    "Normal" => size.normal
+    "Large"  => size.large
+    => size.small
+
+num(float x) =>
+    str.tostring(x, "#.##")
+
+tfLabel(float m) =>
+    m < 1 ? str.tostring(m * 60, "#") + " sec" : m < 60 ? str.tostring(m, "#.##") + " min" : m < 1440 ? str.tostring(m / 60, "#.##") + " h" : timeframe.period
+
+formulaFor(float minutes, int period, float measBars) =>
+    measured and not na(measBars) ? str.format("{0} bars/day × {1} = {2}", num(measBars), str.tostring(days), str.tostring(period)) : str.format("{0} ÷ {1} × {2} = {3}", num(minutes), num(tfMin), str.tostring(days), str.tostring(period))
+
+minutesText(float minutes, float measBars) =>
+    measured and not na(measBars) ? num(measBars * tfMin) + " (measured)" : num(minutes) + " (auto)"
+
+distText(float ma) =>
+    na(ma) ? "—" : str.tostring((close - ma) / ma * 100, "+#.##;-#.##") + " %"
+
+cellL(table t, int col, int row, string s, color bg) =>
+    table.cell(t, col, row, s, text_color = tblTxt, text_size = ts, text_halign = text.align_left, bgcolor = bg)
+
+cellR(table t, int col, int row, string s, color bg, color fg) =>
+    table.cell(t, col, row, s, text_color = fg, text_size = ts, text_halign = text.align_right, bgcolor = bg)
+
+var table stats = table.new(posFrom(statsY, statsX), 3, 11, bgcolor = tblBg, frame_color = tblDiv, frame_width = 1, border_color = tblDiv, border_width = 1)
+var table sheet = table.new(posFrom(sheetY, sheetX), 3, 16, bgcolor = tblBg, frame_color = tblDiv, frame_width = 1, border_color = tblDiv, border_width = 1)
+
+if barstate.islast and showStats
+    stats.clear(0, 0, 2, 10)
+    sessTxt = is24h ? "24h market" : isExtChart ? "Extended (ETH)" : "Regular (RTH)"
+    table.cell(stats, 0, 0, str.format("{0}-Day SMA", days), text_color = tblTxt, text_size = ts, bgcolor = tblHi)
+    cellR(stats, 1, 0, is24h ? "24h" : "RTH", tblHi, rthUp)
+    cellR(stats, 2, 0, hasEth ? "ETH" : "", tblHi, ethUp)
+    cellL(stats, 0, 1, "Timeframe", tblBg)
+    cellR(stats, 1, 1, tfLabel(tfMin), tblBg, tblTxt)
+    table.merge_cells(stats, 1, 1, 2, 1)
+    cellL(stats, 0, 2, "Chart session", tblBg)
+    cellR(stats, 1, 2, sessTxt, tblBg, tblTxt)
+    table.merge_cells(stats, 1, 2, 2, 2)
+    if timeframe.isintraday
+        cellL(stats, 0, 3, "Minutes / day", tblBg)
+        cellR(stats, 1, 3, minutesText(rthMinEff, rthMeas), tblBg, tblTxt)
+        cellL(stats, 0, 4, "Formula", tblHi)
+        cellR(stats, 1, 4, formulaFor(rthMinEff, rthPeriod, rthMeas), tblHi, tblTxt)
+        cellL(stats, 0, 5, "Period", tblBg)
+        cellR(stats, 1, 5, str.tostring(rthPeriod) + " bars", tblBg, tblTxt)
+        // How many real sessions the period spans (thin pre/post market stretches the ETH one)
+        cellL(stats, 0, 6, "Covers ≈", tblBg)
+        cellR(stats, 1, 6, na(rthMeas) ? "—" : num(rthPeriod / rthMeas) + " sessions", tblBg, tblTxt)
+        if hasEth
+            cellR(stats, 2, 3, minutesText(ethMin, ethMeas), tblBg, tblTxt)
+            cellR(stats, 2, 4, formulaFor(ethMin, ethPeriod, ethMeas), tblHi, tblTxt)
+            cellR(stats, 2, 5, str.tostring(ethPeriod) + " bars", tblBg, tblTxt)
+            cellR(stats, 2, 6, na(ethMeas) ? "—" : num(ethPeriod / ethMeas) + " sessions", tblBg, tblTxt)
+    else
+        cellL(stats, 0, 4, "Formula", tblHi)
+        cellR(stats, 1, 4, str.format("SMA({0}) of daily bars", days), tblHi, tblTxt)
+    cellL(stats, 0, 7, "MA value", tblBg)
+    cellR(stats, 1, 7, str.tostring(rthLine, format.mintick), tblBg, tblTxt)
+    cellL(stats, 0, 8, "Price vs MA", tblBg)
+    cellR(stats, 1, 8, distText(rthLine), tblBg, tblTxt)
+    cellL(stats, 0, 9, "Slope", tblBg)
+    cellR(stats, 1, 9, rthRising ? "▲ rising" : "▼ falling", tblBg, rthRising ? rthUp : rthDn)
+    if hasEth
+        cellR(stats, 2, 7, str.tostring(ethLine, format.mintick), tblBg, tblTxt)
+        cellR(stats, 2, 8, distText(ethLine), tblBg, tblTxt)
+        cellR(stats, 2, 9, ethRising ? "▲ rising" : "▼ falling", tblBg, ethRising ? ethUp : ethDn)
+        cellL(stats, 0, 10, "RTH − ETH", tblBg)
+        gap = rthLine - ethLine
+        cellR(stats, 1, 10, na(gap) ? "—" : str.tostring(gap, format.mintick) + "  (" + str.tostring(gap / ethLine * 100, "+#.##;-#.##") + " %)", tblBg, tblTxt)
+        table.merge_cells(stats, 1, 10, 2, 10)
+
+if barstate.islast and showSheet and timeframe.isintraday
+    sheet.clear(0, 0, 2, 15)
+    tfs = array.from(1.0, 2.0, 3.0, 5.0, 10.0, 15.0, 30.0, 60.0, 65.0, 120.0, 240.0)
+    if not tfs.includes(tfMin)
+        tfs.push(tfMin)
+        tfs.sort()
+    table.cell(sheet, 0, 0, "TF", text_color = tblTxt, text_size = ts, bgcolor = tblHi)
+    table.cell(sheet, 1, 0, (is24h ? "24h " : "RTH ") + str.tostring(rthMinEff), text_color = rthUp, text_size = ts, bgcolor = tblHi)
+    if hasEth
+        table.cell(sheet, 2, 0, "ETH " + str.tostring(ethMin), text_color = ethUp, text_size = ts, bgcolor = tblHi)
+    for [i, m] in tfs
+        rowBg = m == tfMin ? tblHi : tblBg
+        pA    = math.max(1, int(math.round(rthMinEff * days / m)))
+        pB    = math.max(1, int(math.round(ethMin * days / m)))
+        table.cell(sheet, 0, i + 1, tfLabel(m), text_color = tblTxt, text_size = ts, bgcolor = rowBg, text_halign = text.align_left)
+        table.cell(sheet, 1, i + 1, str.tostring(pA), text_color = tblTxt, text_size = ts, bgcolor = rowBg)
+        if hasEth
+            table.cell(sheet, 2, i + 1, str.tostring(pB), text_color = tblTxt, text_size = ts, bgcolor = rowBg)
+    table.cell(sheet, 0, tfs.size() + 1, str.format("period = min/day ÷ TF × {0}", days), text_color = tblTxt, text_size = size.tiny, bgcolor = tblBg)
+    table.merge_cells(sheet, 0, tfs.size() + 1, hasEth ? 2 : 1, tfs.size() + 1)
