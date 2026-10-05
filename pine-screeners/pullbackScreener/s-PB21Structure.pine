@@ -1,0 +1,146 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © simsisim
+//
+// s-PB 21 Structure Pullback — indicator + Pine Screener.
+//
+//   STRUCTURE : MA 21 (EMA) of high / close / low, drawn as a band.
+//               From "ADJUSTABLE MA STRUCTURE" (BalarezoCapital, modified by PrimeTrading)
+//               — gd_systems/primeTrading/21dma-structure TV script_v7.3.txt
+//   UPTREND   : middle line (MA of close) higher than N bars ago, and a close
+//               above the top of the band within the last M bars.
+//   PULLBACK  : uptrend and the bar reaches into the band — anywhere from the top
+//               down to the bottom (low <= top, high >= bottom). No hold rule:
+//               this is an "eyes on the chart" scan, the trader decides.
+//   TRIGGER   : after a pullback, a close above the top of the band AND above the
+//               high of the last pullback bar, within K bars. Fires once per pullback.
+//
+// Weekly filter: NOT implemented (the original script only swaps to a 10 SMA on
+// weekly charts; a daily-chart check of the weekly structure is a possible later add).
+// No request.* -> screener-safe. Daily chart.
+//
+//@version=6
+indicator('s-PB 21 Structure Pullback', 'PB 21', overlay = true)
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Inputs
+// ═════════════════════════════════════════════════════════════════════════════
+gMa      = 'Structure'
+maLen    = input.int(21, 'MA length', minval = 1, group = gMa)
+maType   = input.string('EMA', 'MA type', options = ['EMA', 'SMA'], group = gMa)
+
+gTr      = 'Uptrend'
+slopeLen = input.int(5, 'Middle line rising over (bars)', minval = 1, group = gTr,
+     tooltip = 'Uptrend: the middle line (MA of close) is higher than it was N bars ago.')
+strLook  = input.int(10, 'Closed above band within (bars)', minval = 1, group = gTr,
+     tooltip = 'Price closed above the top of the band within the last N bars (today included), so it is pulling back from strength.')
+
+gPb      = 'Pullback / Trigger'
+trigLook = input.int(5, 'Trigger within (bars after pullback)', minval = 1, group = gPb)
+hhLen    = input.int(20, 'Recent high lookback (bars)', minval = 2, group = gPb,
+     tooltip = 'Used for the "Off high %" column: how far the low is below the highest high of the last N bars.')
+volLen   = input.int(50, 'Volume average length', minval = 1, group = gPb)
+atrLen   = input.int(14, 'ATR length', minval = 1, group = gPb)
+
+gVis     = 'Chart'
+showBand  = input.bool(true, 'Show band', group = gVis)
+colUp     = input.color(color.rgb(197, 197, 197), 'Middle line up', inline = 'mc', group = gVis)
+colDn     = input.color(color.rgb(255, 0, 255), 'down', inline = 'mc', group = gVis)
+colCloud  = input.color(color.rgb(120, 123, 134, 64), 'Cloud', group = gVis)
+showMarks = input.bool(true, 'Mark pullback / trigger bars', group = gVis)
+colPb     = input.color(#FF9800, 'Pullback', inline = 'mk', group = gVis)
+colTrig   = input.color(#4CAF50, 'Trigger', inline = 'mk', group = gVis)
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Structure
+// ═════════════════════════════════════════════════════════════════════════════
+_ma(float src) =>
+    maType == 'SMA' ? ta.sma(src, maLen) : ta.ema(src, maLen)
+
+maH = _ma(high)
+maC = _ma(close)
+maL = _ma(low)
+atr = ta.atr(atrLen)
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Uptrend / pullback / trigger
+// ═════════════════════════════════════════════════════════════════════════════
+barsAbove = ta.barssince(close > maH)
+trendUp   = maC > maC[slopeLen] and not na(barsAbove) and barsAbove <= strLook
+
+touch = low <= maH and high >= maL
+pb    = trendUp and touch
+
+// armed on a pullback bar; the trigger must clear that bar's high within trigLook bars
+var bool  armed  = false
+var float pbHigh = na
+var int   pbBar  = na
+trig = armed and bar_index - pbBar <= trigLook and trendUp and close > maH and close > pbHigh
+if trig
+    armed := false
+if pb and not trig
+    armed  := true
+    pbHigh := high
+    pbBar  := bar_index
+if armed and bar_index - pbBar > trigLook
+    armed := false
+
+// pullback number since the trend (re)started; a whole bar below the band or a
+// flat/falling middle line resets the count
+var int pbNum = 0
+if high < maL or not trendUp
+    pbNum := 0
+if pb and not pb[1]
+    pbNum += 1
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Chart
+// ═════════════════════════════════════════════════════════════════════════════
+var color midCol = na
+midCol := maH > maH[1] and maC > maC[1] and maL > maL[1] ? colUp :
+     maH < maH[1] and maC < maC[1] and maL < maL[1] ? colDn : nz(midCol[1], colUp)
+
+pH = plot(showBand ? maH : na, 'MA High', color = color.gray, linewidth = 1)
+plot(showBand ? maC : na, 'MA Close', color = midCol, linewidth = 1)
+pL = plot(showBand ? maL : na, 'MA Low', color = color.gray, linewidth = 1)
+fill(pH, pL, color = colCloud, title = 'Cloud')
+
+plotshape(showMarks and pb and not trig, 'Pullback bar', shape.circle, location.belowbar, colPb, size = size.tiny)
+plotshape(showMarks and trig, 'Trigger bar', shape.triangleup, location.belowbar, colTrig, size = size.small)
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Screener + alerts
+// ═════════════════════════════════════════════════════════════════════════════
+state      = trig ? 2 : pb ? 1 : 0
+// how deep the low went: 1 = top half (top..middle), 2 = bottom half (middle..bottom), 3 = below the band
+lowZone    = not touch ? 0 : low >= maC ? 1 : low >= maL ? 2 : 3
+// where it closed: 1 above the band, 0 inside, -1 below
+closeZone  = close > maH ? 1 : close >= maL ? 0 : -1
+distMidPct = maC != 0 ? (close - maC) / maC * 100 : na
+distMidAtr = atr != 0 ? (close - maC) / atr : na
+lowBotAtr  = atr != 0 ? (low - maL) / atr : na
+hh         = ta.highest(high, hhLen)
+offHighPct = hh != 0 ? (hh - low) / hh * 100 : na
+volAvg     = ta.sma(volume, volLen)
+volRatio   = volAvg != 0 ? volume / volAvg : na
+trendAge   = ta.barssince(high < maL)
+
+// Pine Screener filters: each alertcondition() title shows up as a True/False chip.
+alertcondition(pb,        'PB In Pullback',              'PB: pullback into 21 structure {{ticker}} @ {{close}}')
+alertcondition(trig,      'PB Triggered',                'PB: close back above 21 structure {{ticker}} @ {{close}}')
+alertcondition(pb or trig,'PB Pullback or Triggered',    'PB: pullback/trigger {{ticker}} @ {{close}}')
+alertcondition(trendUp,   'PB Uptrend',                  'PB: 21 structure uptrend {{ticker}}')
+
+// Sortable columns ("Manage columns").
+plot(state,             'PB State (0/1/2)',         display = display.none, editable = false)
+plot(pb ? 1 : 0,        'PB In pullback 1/0',       display = display.none, editable = false)
+plot(trig ? 1 : 0,      'PB Triggered 1/0',         display = display.none, editable = false)
+plot(trendUp ? 1 : 0,   'PB Uptrend 1/0',           display = display.none, editable = false)
+plot(pbNum,             'PB Pullback #',            display = display.none, editable = false)
+plot(lowZone,           'PB Low zone (1/2/3)',      display = display.none, editable = false)
+plot(closeZone,         'PB Close vs band (1/0/-1)', display = display.none, editable = false)
+plot(distMidPct,        'PB Dist mid %',            display = display.none, editable = false)
+plot(distMidAtr,        'PB Dist mid (ATR)',        display = display.none, editable = false)
+plot(lowBotAtr,         'PB Low to bottom (ATR)',   display = display.none, editable = false)
+plot(offHighPct,        'PB Off high %',            display = display.none, editable = false)
+plot(volRatio,          'PB Vol / avg',             display = display.none, editable = false)
+plot(trendAge,          'PB Trend age (bars)',      display = display.none, editable = false)
