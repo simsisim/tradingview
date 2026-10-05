@@ -186,11 +186,32 @@ var int   pwHT = na
 var float pwL = na
 var int   pwLT = na
 
-// today's premarket extremes
-var float pmH = na
-var int   pmHT = na
-var float pmL = na
-var int   pmLT = na
+// today's premarket extremes, always from extended-hours data so they survive an RTH-only chart
+_pmTrack() =>
+    var float h  = na
+    var int   ht = na
+    var float l  = na
+    var int   lt = na
+    d = dayofmonth(time, sessTz)
+    if na(time[1]) or d != d[1]
+        h := na
+        l := na
+    pre = na(time(timeframe.period, regSession, sessTz)) and hour(time, sessTz) * 60 + minute(time, sessTz) < regStartMin
+    if pre
+        if na(h) or high > h
+            h  := high
+            ht := time
+        if na(l) or low < l
+            l  := low
+            lt := time
+    [h, ht, l, lt]
+
+[pmHx, pmHTx, pmLx, pmLTx] = request.security(ticker.modify(syminfo.tickerid, session.extended), timeframe.period, _pmTrack())
+pmH  = isIntra ? pmHx : na
+pmL  = isIntra ? pmLx : na
+// on an RTH chart these point at bars the chart lacks, so drawings clamp them to dayStart
+pmHT = isIntra ? pmHTx : na
+pmLT = isIntra ? pmLTx : na
 
 if newDay and isIntra
     // freeze the day that just ended as a history segment before rolling
@@ -202,10 +223,10 @@ if newDay and isIntra
                 _zone(dayStart, endT, pdH, true, pdhCol, hzT, extend.none)
             if showPDL and not na(pdL)
                 _zone(dayStart, endT, pdL, false, pdlCol, hzT, extend.none)
-            if showPMH and not na(pmH)
-                _zone(pmHT, endT, pmH, true, pmhCol, hzT, extend.none)
-            if showPML and not na(pmL)
-                _zone(pmLT, endT, pmL, false, pmlCol, hzT, extend.none)
+            if showPMH and not na(pmH[1])
+                _zone(math.max(pmHT[1], dayStart), endT, pmH[1], true, pmhCol, hzT, extend.none)
+            if showPML and not na(pmL[1])
+                _zone(math.max(pmLT[1], dayStart), endT, pmL[1], false, pmlCol, hzT, extend.none)
             if showPWH and not na(pwH)
                 _zone(dayStart, endT, pwH, true, pwhCol, hzT, extend.none)
             if showPWL and not na(pwL)
@@ -214,10 +235,10 @@ if newDay and isIntra
             line.new(dayStart, pdH, endT, pdH, xloc=xloc.bar_time, color=color.new(pdhCol, histTransp), width=1, style=_style(pdhSty))
         if showPDL and not na(pdL)
             line.new(dayStart, pdL, endT, pdL, xloc=xloc.bar_time, color=color.new(pdlCol, histTransp), width=1, style=_style(pdlSty))
-        if showPMH and not na(pmH)
-            line.new(pmHT, pmH, endT, pmH, xloc=xloc.bar_time, color=color.new(pmhCol, histTransp), width=1, style=_style(pmhSty))
-        if showPML and not na(pmL)
-            line.new(pmLT, pmL, endT, pmL, xloc=xloc.bar_time, color=color.new(pmlCol, histTransp), width=1, style=_style(pmlSty))
+        if showPMH and not na(pmH[1])
+            line.new(math.max(pmHT[1], dayStart), pmH[1], endT, pmH[1], xloc=xloc.bar_time, color=color.new(pmhCol, histTransp), width=1, style=_style(pmhSty))
+        if showPML and not na(pmL[1])
+            line.new(math.max(pmLT[1], dayStart), pmL[1], endT, pmL[1], xloc=xloc.bar_time, color=color.new(pmlCol, histTransp), width=1, style=_style(pmlSty))
         if showPWH and not na(pwH)
             line.new(dayStart, pwH, endT, pwH, xloc=xloc.bar_time, color=color.new(pwhCol, histTransp), width=1, style=_style(pwhSty))
         if showPWL and not na(pwL)
@@ -239,8 +260,6 @@ if newDay and isIntra
             pwLT := cwLT
         cwH := na
         cwL := na
-    pmH  := na
-    pmL  := na
     dayStart := time
 
 useBar = pdMode == 'Regular only' ? inRegular : true
@@ -257,14 +276,6 @@ if isIntra and useBar
     if na(cwL) or low < cwL
         cwL  := low
         cwLT := time
-
-if isIntra and isPre
-    if na(pmH) or high > pmH
-        pmH  := high
-        pmHT := time
-    if na(pmL) or low < pmL
-        pmL  := low
-        pmLT := time
 
 // current-day level lines are redrawn on the last bar only
 var line[]  lvlLines  = array.new_line()
@@ -302,8 +313,8 @@ if barstate.islast and isIntra
     array.clear(lvlBoxes)
     _drawLevel(showPDH, pdH, pdHT, 'PD-H',  pdhCol, pdhW, pdhSty, true,  lblStagger)
     _drawLevel(showPDL, pdL, pdLT, 'PD-L',  pdlCol, pdlW, pdlSty, false, lblStagger)
-    _drawLevel(showPMH, pmH, pmHT, 'Pre-H', pmhCol, pmhW, pmhSty, true,  0)
-    _drawLevel(showPML, pmL, pmLT, 'Pre-L', pmlCol, pmlW, pmlSty, false, 0)
+    _drawLevel(showPMH, pmH, math.max(pmHT, dayStart), 'Pre-H', pmhCol, pmhW, pmhSty, true,  0)
+    _drawLevel(showPML, pmL, math.max(pmLT, dayStart), 'Pre-L', pmlCol, pmlW, pmlSty, false, 0)
     _drawLevel(showPWH, pwH, pwHT, 'PW-H',  pwhCol, pwhW, pwhSty, true,  2 * lblStagger)
     _drawLevel(showPWL, pwL, pwLT, 'PW-L',  pwlCol, pwlW, pwlSty, false, 2 * lblStagger)
 
