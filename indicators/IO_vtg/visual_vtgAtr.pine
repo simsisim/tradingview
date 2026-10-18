@@ -23,7 +23,7 @@ indicator('s-VTG ATR', 'VTG ATR', overlay = true, max_lines_count = 20)
 // Inputs
 // ═════════════════════════════════════════════════════════════════════════════
 gR = 'Table rows'
-showAtrPct   = input.bool(false, 'ATR %',                     group = gR)
+showAtrPct   = input.bool(true,  'ATR %',                     group = gR)
 showAdrPct   = input.bool(false, 'ADR %',                     group = gR)
 showAnchLow  = input.bool(true,  'Low  (ATR from day Low)',   group = gR)
 showAnchOpen = input.bool(false, 'Open (ATR from day Open)',  group = gR)
@@ -164,7 +164,7 @@ if barstate.islast and timeframe.period != '1M'
     table.clear(t, 0, 0, 1, 19)
     int r = 0
     if showAtrPct
-        r := f_row(r, 'ATR %',  str.tostring(atrPct, '0.00') + '%', tBg)
+        r := f_row(r, 'ATR % (' + str.tostring(atrLen) + ')', str.tostring(atrPct, '0.00') + '%', tBg)
     if showAdrPct
         r := f_row(r, 'ADR %',  str.tostring(adrPct, '0.00') + '%', tBg)
     if showAnchLow
