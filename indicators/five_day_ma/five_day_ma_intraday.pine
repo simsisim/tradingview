@@ -13,6 +13,9 @@
 //   ETH line — pre + regular + post-market bars (960 min/day for US stocks).
 // "Measured from data" counts the bars that really printed in the last N sessions, which
 // handles half days, thin pre/post-market with missing bars, and non-US / 24h markets.
+//
+// Start line — vertical line on the oldest bar still inside the average, in the MA's color.
+// That bar drops out next, so: new close above its close = MA rises, below = MA falls.
 indicator("5-Day Moving Average · Intraday (RTH/ETH)", shorttitle = "5DMA", overlay = true)
 
 // ───────────────────────────── Inputs
@@ -33,6 +36,9 @@ ethUp        = input.color(#9C27B0, "Rising", inline = "e", group = GRP_STYLE)
 ethDn        = input.color(#E91E63, "Falling", inline = "e", group = GRP_STYLE)
 colorBySlope = input.bool(true, "Color by slope (otherwise 'Rising' color only)", group = GRP_STYLE)
 lineWidth    = input.int(2, "Line width", minval = 1, maxval = 6, group = GRP_STYLE)
+showRthStart = input.bool(true, "RTH start line", group = GRP_STYLE, tooltip = "Vertical line on the oldest bar in the average. It drops out next. Intraday charts only.")
+showEthStart = input.bool(false, "ETH start line", group = GRP_STYLE, tooltip = "Same for the ETH line. Best on an extended-hours chart: on a regular-hours chart the bar may be pre/post-market, which the chart does not show.")
+startStyleIn = input.string("Dotted", "Start line style", options = ["Solid", "Dashed", "Dotted"], group = GRP_STYLE)
 
 GRP_TBL = "Tables"
 showStats = input.bool(true, "Stats table", group = GRP_TBL)
@@ -64,7 +70,7 @@ periodFor(float minutes) =>
     math.max(1, int(math.round(minutes * days / tfMin)))
 
 // Runs inside request.security, so every bar of the requested session is part of the average.
-// Returns [ma, period, measured bars per session].
+// Returns [ma, period, measured bars per session, time of the oldest bar in the average].
 calc5dma(float sessMinutes) =>
     // Bars per session: written into a ring buffer every bar (idempotent, so realtime ticks are safe)
     var int dayNum   = 0   // day 0 = first (probably partial) session on the chart
@@ -93,23 +99,27 @@ calc5dma(float sessMinutes) =>
     period := math.min(period, CAP - 1)
 
     // Rolling SMA from prefix sums in a ring buffer (period may change between days)
-    var float[] cumRing = array.new_float(CAP, 0.0)
-    var int     n       = 0
-    var float   cum     = 0.0
+    var float[] cumRing  = array.new_float(CAP, 0.0)
+    var int[]   timeRing = array.new_int(CAP, 0)
+    var int     n        = 0
+    var float   cum      = 0.0
     if not na(src)
         cum += src
         n   += 1
         cumRing.set(n % CAP, cum)
+        timeRing.set(n % CAP, time)
     float ma = na
+    int startTime = na
     if n >= period
         base = n == period ? 0.0 : cumRing.get((n - period) % CAP)
         ma := (cum - base) / period
-    [ma, period, measBars]
+        startTime := timeRing.get((n - period + 1) % CAP)
+    [ma, period, measBars, startTime]
 
 rthTicker = ticker.modify(syminfo.tickerid, session = session.regular)
 ethTicker = ticker.modify(syminfo.tickerid, session = session.extended)
-[rthMa, rthPeriod, rthMeas] = request.security(rthTicker, timeframe.period, calc5dma(rthMinEff))
-[ethMa, ethPeriod, ethMeas] = request.security(ethTicker, timeframe.period, calc5dma(ethMin))
+[rthMa, rthPeriod, rthMeas, rthStart] = request.security(rthTicker, timeframe.period, calc5dma(rthMinEff))
+[ethMa, ethPeriod, ethMeas, ethStart] = request.security(ethTicker, timeframe.period, calc5dma(ethMin))
 dailySma = request.security(syminfo.tickerid, "1D", ta.sma(src, days))
 
 hasEth  = timeframe.isintraday and not is24h
@@ -127,8 +137,22 @@ risingState(float x) =>
 rthRising = risingState(rthLine)
 ethRising = risingState(ethLine)
 
-plot(showRth ? rthLine : na, "5DMA RTH", color = colorBySlope and not rthRising ? rthDn : rthUp, linewidth = lineWidth)
-plot(showEth ? ethLine : na, "5DMA ETH", color = colorBySlope and not ethRising ? ethDn : ethUp, linewidth = lineWidth)
+plot(showRth ? rthLine : na, "5DMA RTH", color = colorBySlope and not rthRising ? rthDn : rthUp, linewidth = lineWidth, linestyle = plot.linestyle_dotted)
+plot(showEth ? ethLine : na, "5DMA ETH", color = colorBySlope and not ethRising ? ethDn : ethUp, linewidth = lineWidth, linestyle = plot.linestyle_dotted)
+
+// ───────────────────────────── Start lines: only the current one is kept
+startStyle = startStyleIn == "Solid" ? line.style_solid : startStyleIn == "Dotted" ? line.style_dotted : line.style_dashed
+
+drawStart(line old, bool show, int t, color c) =>
+    if not na(old)
+        line.delete(old)
+    show and not na(t) ? line.new(t, close * 0.99, t, close * 1.01, xloc = xloc.bar_time, extend = extend.both, color = c, style = startStyle, width = 1) : na
+
+var line rthStartLine = na
+var line ethStartLine = na
+if barstate.islast
+    rthStartLine := drawStart(rthStartLine, showRthStart and timeframe.isintraday, rthStart, colorBySlope and not rthRising ? rthDn : rthUp)
+    ethStartLine := drawStart(ethStartLine, showEthStart and hasEth, ethStart, colorBySlope and not ethRising ? ethDn : ethUp)
 
 alertcondition(ta.crossover(close, rthLine), "Price crosses above RTH 5DMA", "{{ticker}} crossed above the RTH 5-day MA")
 alertcondition(ta.crossunder(close, rthLine), "Price crosses below RTH 5DMA", "{{ticker}} crossed below the RTH 5-day MA")

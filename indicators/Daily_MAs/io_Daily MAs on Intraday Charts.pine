@@ -1,17 +1,88 @@
-//@version=5
-indicator("io_Daily MAs on Intraday Charts", shorttitle="io_Daily MAs on Intraday Charts", overlay=true)
+//@version=6
+indicator("io_Daily MAs on Intraday Charts", shorttitle="io_Daily MAs on Intraday Charts", overlay=true, max_lines_count=50)
+
+// Start lines (Brian Shannon / "Moving Average with Start Line"):
+// a vertical line on the oldest higher-timeframe bar still inside each average, in the MA's color.
+// That bar drops out next: if the new close is above its close, the MA rises; below, it falls.
+// For an SMA this is exact. An EMA has no hard window, so its line only marks "length" bars back.
+
+// ───────────────────────────── Lengths (shared by plots and start lines)
+LEN_5D = 5
+LEN_10D = 10
+LEN_21D = 21
+LEN_50D = 50
+LEN_150D = 150
+LEN_200D = 200
+LEN_10W = 10
+LEN_30W = 30
+LEN_65M = 21
+
+// ───────────────────────────── Start line inputs
+GRP = "Start lines"
+sl5D   = input.bool(false, "5D EMA", group=GRP, inline="a")
+sl10D  = input.bool(false, "10D EMA", group=GRP, inline="a")
+sl21D  = input.bool(true, "21D EMA", group=GRP, inline="b")
+sl50D  = input.bool(true, "50D SMA", group=GRP, inline="b")
+sl150D = input.bool(false, "150D SMA", group=GRP, inline="c")
+sl200D = input.bool(false, "200D SMA", group=GRP, inline="c")
+sl10W  = input.bool(false, "10W SMA", group=GRP, inline="d")
+sl30W  = input.bool(false, "30W SMA", group=GRP, inline="d")
+sl65M  = input.bool(false, "65m 21 EMA", group=GRP, inline="e")
+slStyleIn = input.string("Dashed", "Style", options=["Solid", "Dashed", "Dotted"], group=GRP)
 
 // Plot the SMAs/EMAs - D for Daily - sma/ema - close - period - width & color
-plot(request.security(syminfo.tickerid, 'D', ta.ema(high, 4)), linewidth=2, color=color.white, title='4D EMA HIGH')
-plot(request.security(syminfo.tickerid, 'D', ta.ema(close, 5)), linewidth=2, color=color.teal, title='5D EMA')
-plot(request.security(syminfo.tickerid, 'D', ta.ema(close, 10)), linewidth=2, color=color.red, title='10D EMA')
-plot(request.security(syminfo.tickerid, 'D', ta.ema(close, 21)), linewidth=2, color=color.blue, title='21D EMA')
-plot(request.security(syminfo.tickerid, 'D', ta.sma(close, 20)), linewidth=2, color=color.yellow, title='20D SMA')
-plot(request.security(syminfo.tickerid, 'D', ta.sma(close, 50)), linewidth=3, color=color.green, title='50D SMA')
-plot(request.security(syminfo.tickerid, 'D', ta.sma(close, 150)), linewidth=3, color=color.aqua, title='150D SMA')
-plot(request.security(syminfo.tickerid, 'D', ta.sma(close, 200)), linewidth=3, color = color.orange, title='200D SMA')  
+plot(request.security(syminfo.tickerid, 'D', ta.ema(close, LEN_5D)), linewidth=2, color=color.teal, title='5D EMA', display=display.none) // hidden by default; enable in Style tab
+plot(request.security(syminfo.tickerid, 'D', ta.ema(close, LEN_10D)), linewidth=2, color=color.red, title='10D EMA')
+plot(request.security(syminfo.tickerid, 'D', ta.ema(close, LEN_21D)), linewidth=2, color=color.blue, title='21D EMA')
+plot(request.security(syminfo.tickerid, 'D', ta.sma(close, LEN_50D)), linewidth=3, color=color.green, title='50D SMA')
+plot(request.security(syminfo.tickerid, 'D', ta.sma(close, LEN_150D)), linewidth=3, color=color.aqua, title='150D SMA', display=display.none) // hidden by default; enable in Style tab
+plot(request.security(syminfo.tickerid, 'D', ta.sma(close, LEN_200D)), linewidth=3, color = color.orange, title='200D SMA')
 
-plot(request.security(syminfo.tickerid, 'W', ta.sma(close, 10)), linewidth=3, color=color.green, title='10W SMA')
-plot(request.security(syminfo.tickerid, 'W', ta.sma(close, 50)), linewidth=3, color = color.aqua, title='30W SMA')
+plot(request.security(syminfo.tickerid, 'W', ta.sma(close, LEN_10W)), linewidth=3, color=color.green, title='10W SMA', display=display.none) // hidden by default; enable in Style tab
+plot(request.security(syminfo.tickerid, 'W', ta.sma(close, LEN_30W)), linewidth=3, color = color.aqua, title='30W SMA', display=display.none) // hidden by default; enable in Style tab
 // New 65-minute 21 EMA (added below existing plots)
-plot(request.security(syminfo.tickerid, '65', ta.ema(close, 21)), linewidth=2, color=color.purple, title='65m 21 EMA')
+plot(request.security(syminfo.tickerid, '65', ta.ema(close, LEN_65M)), linewidth=2, color=color.purple, title='65m 21 EMA', display=display.none) // hidden by default; enable in Style tab
+
+// ───────────────────────────── Start lines
+// Open time of the oldest bar in the window (the current, still-forming HTF bar counts as the newest).
+startTime(string tf, int len) =>
+    request.security(syminfo.tickerid, tf, time[len - 1])
+
+t5D   = startTime('D', LEN_5D)
+t10D  = startTime('D', LEN_10D)
+t21D  = startTime('D', LEN_21D)
+t50D  = startTime('D', LEN_50D)
+t150D = startTime('D', LEN_150D)
+t200D = startTime('D', LEN_200D)
+t10W  = startTime('W', LEN_10W)
+t30W  = startTime('W', LEN_30W)
+t65M  = startTime('65', LEN_65M)
+
+slStyle = slStyleIn == "Solid" ? line.style_solid : slStyleIn == "Dotted" ? line.style_dotted : line.style_dashed
+
+// Only the current start line per MA is kept: the old one is deleted on every update.
+drawStart(line old, bool show, int t, color c) =>
+    if not na(old)
+        line.delete(old)
+    show and not na(t) ? line.new(t, close * 0.99, t, close * 1.01, xloc=xloc.bar_time, extend=extend.both, color=c, style=slStyle, width=1) : na
+
+var line l5D   = na
+var line l10D  = na
+var line l21D  = na
+var line l50D  = na
+var line l150D = na
+var line l200D = na
+var line l10W  = na
+var line l30W  = na
+var line l65M  = na
+
+if barstate.islast
+    l5D   := drawStart(l5D, sl5D, t5D, color.teal)
+    l10D  := drawStart(l10D, sl10D, t10D, color.red)
+    l21D  := drawStart(l21D, sl21D, t21D, color.blue)
+    l50D  := drawStart(l50D, sl50D, t50D, color.green)
+    l150D := drawStart(l150D, sl150D, t150D, color.aqua)
+    l200D := drawStart(l200D, sl200D, t200D, color.orange)
+    l10W  := drawStart(l10W, sl10W, t10W, color.green)
+    l30W  := drawStart(l30W, sl30W, t30W, color.aqua)
+    l65M  := drawStart(l65M, sl65M, t65M, color.purple)
