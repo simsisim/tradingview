@@ -1,0 +1,148 @@
+//@version=6
+// Auto Anchored VWAP — picks the anchor from the chart timeframe and draws ONLY the latest periods
+//
+// Defaults (each row can be changed in the settings):
+//     Under 15 min    Today + Yesterday
+//     15 min – 1 h    This week
+//     Over 1 h        This month
+//     Daily           YTD
+//     Weekly and up   YTD + Last year
+//
+// The "previous" line starts at the previous period's anchor and keeps running through the
+// current period: on a 2 min chart, "Yesterday" is the VWAP of all volume since yesterday's
+// start, so today it shows where the last two days' buyers are on average.
+//
+// The lines are polylines rebuilt on the last bar, because a plot cannot erase older history
+// (nor know on a past bar which day will end up being "yesterday"). Values are also exposed
+// in the status line and data window.
+indicator("Auto Anchored VWAP", shorttitle = "Auto AVWAP", overlay = true, max_polylines_count = 2, max_labels_count = 3)
+
+// ───────────────────────────── Inputs
+GRP_ANCHOR = "Anchor by chart timeframe  (period + also show previous period)"
+pFast    = input.string("Day", "Under 15 min", options = ["Day", "Week", "Month", "Quarter", "Year"], inline = "t1", group = GRP_ANCHOR)
+prevFast = input.bool(true, "Previous", inline = "t1", group = GRP_ANCHOR)
+pMid     = input.string("Week", "15 min – 1 h", options = ["Day", "Week", "Month", "Quarter", "Year"], inline = "t2", group = GRP_ANCHOR)
+prevMid  = input.bool(false, "Previous", inline = "t2", group = GRP_ANCHOR)
+pSlow    = input.string("Month", "Over 1 h", options = ["Day", "Week", "Month", "Quarter", "Year"], inline = "t3", group = GRP_ANCHOR)
+prevSlow = input.bool(false, "Previous", inline = "t3", group = GRP_ANCHOR)
+pDay     = input.string("Year", "Daily", options = ["Week", "Month", "Quarter", "Year"], inline = "t4", group = GRP_ANCHOR)
+prevDay  = input.bool(false, "Previous", inline = "t4", group = GRP_ANCHOR)
+pWeek    = input.string("Year", "Weekly and up", options = ["Quarter", "Year"], inline = "t5", group = GRP_ANCHOR)
+prevWeek = input.bool(true, "Previous", inline = "t5", group = GRP_ANCHOR)
+
+GRP_CALC = "Calculation"
+src        = input.source(hlc3, "Source", group = GRP_CALC)
+anchorMode = input.string("Session start", "Anchor at", options = ["Session start", "Regular open"], group = GRP_CALC,
+     tooltip = "Only matters on an extended-hours chart.\nSession start: the period begins with premarket.\nRegular open: the period begins at the first regular-hours bar, so until then today's premarket still belongs to the previous period.")
+
+GRP_STYLE = "Style"
+curCol     = input.color(#2962FF, "Current", inline = "c", group = GRP_STYLE)
+prevCol    = input.color(#FF6D00, "Previous", inline = "c", group = GRP_STYLE)
+lineWidth  = input.int(2, "Line width", minval = 1, maxval = 6, group = GRP_STYLE)
+showLabels = input.bool(true, "Labels at the last bar", group = GRP_STYLE)
+
+// ───────────────────────────── Period for this chart timeframe
+tfSec = timeframe.in_seconds()
+string period = tfSec < 900 ? pFast : tfSec <= 3600 ? pMid : timeframe.isintraday ? pSlow : timeframe.isdaily ? pDay : pWeek
+bool showPrev = tfSec < 900 ? prevFast : tfSec <= 3600 ? prevMid : timeframe.isintraday ? prevSlow : timeframe.isdaily ? prevDay : prevWeek
+
+periodTf(string p) =>
+    switch p
+        "Day"     => "D"
+        "Week"    => "W"
+        "Month"   => "M"
+        "Quarter" => "3M"
+        => "12M"
+
+curName(string p) =>
+    switch p
+        "Day"     => "Today"
+        "Week"    => "This week"
+        "Month"   => "This month"
+        "Quarter" => "QTD"
+        => "YTD"
+
+prevName(string p) =>
+    switch p
+        "Day"     => "Yesterday"
+        "Week"    => "Last week"
+        "Month"   => "Last month"
+        "Quarter" => "Last quarter"
+        => "Last year"
+
+// ───────────────────────────── Rolling the anchors
+// Polyline limit. Only reachable with a long period on a very low timeframe; the oldest points are dropped.
+MAX_POINTS = 10000
+
+// Same bar → overwrite, new bar → append, so realtime ticks never add duplicate points.
+addPoint(array<chart.point> pts, chart.point p) =>
+    n = pts.size()
+    if n > 0 and pts.get(n - 1).time == p.time
+        pts.set(n - 1, p)
+    else
+        pts.push(p)
+        if pts.size() > MAX_POINTS
+            pts.shift()
+
+var float curPV  = 0.0
+var float curV   = 0.0
+var float prevPV = 0.0
+var float prevV  = 0.0
+var float totalV = 0.0
+var array<chart.point> curPts  = array.new<chart.point>()
+var array<chart.point> prevPts = array.new<chart.point>()
+var bool pendingRoll = false
+
+newPeriod = timeframe.change(periodTf(period))
+if newPeriod
+    pendingRoll := true
+
+// Daily and higher bars are always a regular session; only intraday bars wait for the open
+canRoll = anchorMode == "Session start" or not timeframe.isintraday or session.ismarket
+
+// At a new period the current line becomes the previous line, with its sums and its points
+if pendingRoll and canRoll
+    prevPV      := curPV
+    prevV       := curV
+    prevPts     := curPts
+    curPV       := 0.0
+    curV        := 0.0
+    curPts      := array.new<chart.point>()
+    pendingRoll := false
+
+vol     = nz(volume)
+curPV  += src * vol
+curV   += vol
+prevPV += src * vol
+prevV  += vol
+totalV += vol
+
+float curVwap  = curV > 0 ? curPV / curV : na
+float prevVwap = prevV > 0 ? prevPV / prevV : na
+
+if not na(curVwap)
+    addPoint(curPts, chart.point.from_time(time, curVwap))
+if not na(prevVwap)
+    addPoint(prevPts, chart.point.from_time(time, prevVwap))
+
+// ───────────────────────────── Drawing
+drawVwap(array<chart.point> pts, color col, string name, float value) =>
+    if pts.size() >= 2
+        polyline.new(pts, xloc = xloc.bar_time, line_color = col, line_width = lineWidth)
+    if showLabels and not na(value)
+        label.new(time, value, name + " " + str.tostring(value, format.mintick), xloc = xloc.bar_time, style = label.style_label_left, color = color.new(col, 100), textcolor = col, size = size.small)
+
+if barstate.islast
+    for p in polyline.all
+        p.delete()
+    for l in label.all
+        l.delete()
+    if showPrev
+        drawVwap(prevPts, prevCol, prevName(period), prevVwap)
+    drawVwap(curPts, curCol, curName(period), curVwap)
+    if totalV == 0
+        label.new(time, close, "No volume data: VWAP unavailable for this symbol", xloc = xloc.bar_time, style = label.style_label_left, color = color.new(chart.fg_color, 100), textcolor = chart.fg_color, size = size.small)
+
+// Values for the status line and data window (nothing is drawn on the chart)
+plot(curVwap, "VWAP current", color = curCol, display = display.status_line + display.data_window)
+plot(showPrev ? prevVwap : na, "VWAP previous", color = prevCol, display = display.status_line + display.data_window)

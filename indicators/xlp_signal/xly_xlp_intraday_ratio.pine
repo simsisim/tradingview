@@ -1,0 +1,49 @@
+//@version=6
+// =============================================================================
+// XLY:XLP Intraday Performance Ratio ("ignores gaps")
+// Companion to Bowley's @XLYXLP UDI. Cumulative daytime (open->close)
+// out/under-performance of consumer discretionary vs. consumer staples.
+//
+// Read: falling line while $SPX rises  = risk-off under the surface = warning.
+//       rising line while $SPX falls   = bottom forming / passed.
+// =============================================================================
+indicator("XLY:XLP Intraday Ratio", "XLY:XLP intra", overlay = false, precision = 2)
+
+xly    = input.symbol("AMEX:XLY", "Numerator (discretionary)")
+xlp    = input.symbol("AMEX:XLP", "Denominator (staples)")
+start  = input.float(100.0, "Index start value")
+// "Cumulative spread" = Bowley's UDI: his 9 Oct 2026 daily changes (XLY:XLP
+// -0.13, QQQ:SPY -0.47) equal the open->close differences to 2 decimals
+method = input.string("Cumulative spread", "Method",
+     options = ["Cumulative spread", "Ratio of compounded indices"])
+anchor = input.time(timestamp("03 Jan 2022 00:00 +0000"), "Set start date",
+     tooltip = "Accumulation resets to the start value on the first bar at/after this date. Bowley's chart begins 2022-01-04.")
+
+[yo, yc] = request.security(xly, "D", [open, close], lookahead = barmerge.lookahead_off)
+[po, pc] = request.security(xlp, "D", [open, close], lookahead = barmerge.lookahead_off)
+
+yRet = yc / yo - 1.0   // XLY daytime return (fraction)
+pRet = pc / po - 1.0   // XLP daytime return (fraction)
+
+live = time >= anchor
+
+var bool  init = false
+var float idx  = na
+var float iXLY  = na
+var float iXLP  = na
+
+if live and not init
+    init := true
+    idx  := start
+    iXLY := start
+    iXLP := start
+else if live
+    if method == "Cumulative spread"
+        idx := idx + nz(yRet - pRet) * 100.0
+    else
+        iXLY := iXLY * (1.0 + nz(yRet))
+        iXLP := iXLP * (1.0 + nz(pRet))
+        idx  := iXLY / iXLP * start
+
+plot(idx, "XLY:XLP intraday", color = color.new(color.blue, 0), linewidth = 2)
+hline(start, "Start / parity", color = color.new(color.gray, 50), linestyle = hline.style_dashed)

@@ -1,0 +1,152 @@
+//@version=6
+// Weekly MAs on intraday charts — two user-defined weekly MAs (default 8W and 10W, SMA or EMA),
+// each drawable with any of three calculations: Live, Confirmed, Chart-bar approximation
+//
+// Why community scripts disagree — there are three different things called "the 10-week MA":
+//
+//   LIVE (developing week)  — the 10W MA as it would read if this week closed at the current price:
+//        SMA:  (sum of the last N-1 COMPLETED weekly closes + current price) ÷ N
+//        EMA:  prevWeekEMA + α × (current price − prevWeekEMA),  α = 2 ÷ (N+1)
+//        Moves every bar during the week; at Friday's close it equals the real weekly MA exactly.
+//        Computed from each chart bar's own close, so history shows what you would have seen live
+//        (no repaint).  This is what a weekly chart shows on its last, unfinished candle.
+//
+//   CONFIRMED (last completed week) — the weekly MA as of last Friday's close, flat all week,
+//        steps on Monday.  request.security(..., ma[1], lookahead_on) — TradingView's recommended
+//        non-repainting pattern.  Lags by up to one week.
+//
+//   CHART-BAR approximation — a plain SMA/EMA of N weeks' worth of chart bars
+//        (30 min RTH: 10 × 5 days × 13 bars = 650).  Smooth, but it averages every 30 min close,
+//        not the weekly closes, so it is a different number (closer to a 50-day MA of intraday data).
+//
+// The common naive script  request.security(tickerid, "W", ta.sma(close, 10))  mixes the two first ones:
+// on historical bars it shows the PREVIOUS week's value until the week's last bar (lookahead_off),
+// but on realtime bars it shows the developing value — so the line you see live differs from the
+// line after a reload.  That is the main source of "different results".
+indicator("Weekly MAs on Intraday (Live · Confirmed · Chart-bar)", shorttitle = "W-MAs", overlay = true)
+
+// ───────────────────────────── Inputs
+GRP_CALC = "Calculation"
+src       = input.source(close, "Source", group = GRP_CALC)
+rthOnly   = input.bool(true, "Live line uses regular-hours price only", group = GRP_CALC,
+     tooltip = "Weekly bars of stocks are built from regular-hours data. On an extended-hours chart the live line holds its last RTH value through pre/post market instead of mixing in after-hours prices.")
+rthMin    = input.int(390, "RTH session length (minutes)", minval = 1, maxval = 1440, group = GRP_CALC, tooltip = "Only used by the chart-bar approximation. US 09:30–16:00 = 390.")
+ethMin    = input.int(960, "ETH session length (minutes)", minval = 1, maxval = 1440, group = GRP_CALC, tooltip = "Only used by the chart-bar approximation on an extended-hours chart. US 04:00–20:00 = 960.")
+
+GRP_A = "MA 1"
+showA     = input.bool(true, "Show", inline = "a0", group = GRP_A)
+typeA     = input.string("SMA", "", options = ["SMA", "EMA"], inline = "a0", group = GRP_A)
+lenA      = input.int(8, "Weeks", minval = 1, maxval = 200, inline = "a0", group = GRP_A)
+liveA     = input.bool(true, "Live", inline = "a1", group = GRP_A)
+liveColA  = input.color(#2962FF, "", inline = "a1", group = GRP_A)
+confA     = input.bool(true, "Confirmed", inline = "a1", group = GRP_A)
+confColA  = input.color(#2962FF, "", inline = "a1", group = GRP_A)
+apprA     = input.bool(false, "Chart-bar approx.", inline = "a1", group = GRP_A)
+apprColA  = input.color(#787B86, "", inline = "a1", group = GRP_A)
+
+GRP_B = "MA 2"
+showB     = input.bool(true, "Show", inline = "b0", group = GRP_B)
+typeB     = input.string("SMA", "", options = ["SMA", "EMA"], inline = "b0", group = GRP_B)
+lenB      = input.int(10, "Weeks", minval = 1, maxval = 200, inline = "b0", group = GRP_B)
+liveB     = input.bool(true, "Live", inline = "b1", group = GRP_B)
+liveColB  = input.color(#FF6D00, "", inline = "b1", group = GRP_B)
+confB     = input.bool(true, "Confirmed", inline = "b1", group = GRP_B)
+confColB  = input.color(#FF6D00, "", inline = "b1", group = GRP_B)
+apprB     = input.bool(false, "Chart-bar approx.", inline = "b1", group = GRP_B)
+apprColB  = input.color(#B2B5BE, "", inline = "b1", group = GRP_B)
+
+GRP_STYLE = "Style"
+lineW     = input.int(2, "Live line width", minval = 1, maxval = 6, group = GRP_STYLE)
+confW     = input.int(1, "Confirmed line width", minval = 1, maxval = 6, group = GRP_STYLE)
+confTr    = input.int(40, "Confirmed line transparency", minval = 0, maxval = 100, group = GRP_STYLE)
+showTbl   = input.bool(true, "Table", group = GRP_STYLE)
+tblPos    = input.string("bottom_right", "Table position", options = ["top_left", "top_right", "bottom_left", "bottom_right"], group = GRP_STYLE)
+
+// ───────────────────────────── Context
+is24h      = syminfo.type == "futures" or syminfo.type == "crypto" or syminfo.type == "forex" or syminfo.type == "cfd"
+isExtChart = syminfo.session == session.extended
+lowerTf    = timeframe.in_seconds() < timeframe.in_seconds("W")
+
+// Price fed into the live line: on an ETH stock chart, hold the last regular-hours value
+var float rthPrice = na
+if not rthOnly or is24h or not isExtChart or session.ismarket
+    rthPrice := src
+livePrice = rthPrice
+
+// ───────────────────────────── Calculations
+// Values from COMPLETED weeks only ([1] + lookahead_on = last confirmed weekly bar, no repaint)
+weeklyParts(string maType, int len) =>
+    // all series computed on every bar (no ta.* calls inside conditionals)
+    sum1 = math.sum(src, math.max(1, len - 1))
+    sma  = ta.sma(src, len)
+    ema  = ta.ema(src, len)
+    float prevSum = maType == "SMA" ? (len > 1 ? sum1[1] : 0.0) : na
+    float prevMa  = maType == "SMA" ? sma[1] : ema[1]
+    [prevSum, prevMa]
+
+liveMa(string maType, int len, float prevSum, float prevMa, float price) =>
+    maType == "SMA" ? (prevSum + price) / len : prevMa + 2.0 / (len + 1) * (price - prevMa)
+
+apprMa(string maType, int len) =>
+    tfMin   = timeframe.in_seconds() / 60.0
+    dayMin  = is24h ? 1440.0 : isExtChart ? ethMin : rthMin
+    weekDay = syminfo.type == "crypto" ? 7 : 5
+    period  = math.max(1, int(math.round(dayMin * weekDay * len / tfMin)))
+    sma     = ta.sma(src, period)
+    ema     = ta.ema(src, period)
+    [maType == "SMA" ? sma : ema, period]
+
+[sumA, prevA] = request.security(syminfo.tickerid, "W", weeklyParts(typeA, lenA), lookahead = barmerge.lookahead_on)
+[sumB, prevB] = request.security(syminfo.tickerid, "W", weeklyParts(typeB, lenB), lookahead = barmerge.lookahead_on)
+
+liveValA = lowerTf ? liveMa(typeA, lenA, sumA, prevA, livePrice) : na
+liveValB = lowerTf ? liveMa(typeB, lenB, sumB, prevB, livePrice) : na
+[apprValA, apprLenA] = apprMa(typeA, lenA)
+[apprValB, apprLenB] = apprMa(typeB, lenB)
+
+// ───────────────────────────── Plots
+plot(showA and liveA ? liveValA : na, "MA 1 live", color = liveColA, linewidth = lineW)
+plot(showA and confA ? prevA : na, "MA 1 confirmed", color = color.new(confColA, confTr), linewidth = confW, style = plot.style_stepline)
+plot(showA and apprA and timeframe.isintraday ? apprValA : na, "MA 1 chart-bar approx.", color = apprColA, linewidth = 1)
+plot(showB and liveB ? liveValB : na, "MA 2 live", color = liveColB, linewidth = lineW)
+plot(showB and confB ? prevB : na, "MA 2 confirmed", color = color.new(confColB, confTr), linewidth = confW, style = plot.style_stepline)
+plot(showB and apprB and timeframe.isintraday ? apprValB : na, "MA 2 chart-bar approx.", color = apprColB, linewidth = 1)
+
+alertcondition(ta.crossover(close, liveValA), "Price crosses above MA 1 (live)", "{{ticker}} crossed above the weekly MA 1")
+alertcondition(ta.crossunder(close, liveValA), "Price crosses below MA 1 (live)", "{{ticker}} crossed below the weekly MA 1")
+alertcondition(ta.crossover(close, liveValB), "Price crosses above MA 2 (live)", "{{ticker}} crossed above the weekly MA 2")
+alertcondition(ta.crossunder(close, liveValB), "Price crosses below MA 2 (live)", "{{ticker}} crossed below the weekly MA 2")
+
+// ───────────────────────────── Table
+pos = switch tblPos
+    "top_left"    => position.top_left
+    "top_right"   => position.top_right
+    "bottom_left" => position.bottom_left
+    => position.bottom_right
+
+pct(float ma) =>
+    na(ma) ? "—" : str.tostring((close - ma) / ma * 100, "+#.##;-#.##") + " %"
+
+px(float x) =>
+    na(x) ? "—" : str.tostring(x, format.mintick)
+
+var table tbl = table.new(pos, 4, 4, bgcolor = color.new(#FFFFFF, 0), frame_color = #B2B5BE, frame_width = 1, border_color = #B2B5BE, border_width = 1)
+
+row(int r, string name, color c, float live, float conf, float appr, int apprLen, bool apprOn) =>
+    table.cell(tbl, 0, r, name, text_color = c, text_size = size.small, text_halign = text.align_left)
+    table.cell(tbl, 1, r, px(live) + "  " + pct(live), text_color = #2A2E39, text_size = size.small)
+    table.cell(tbl, 2, r, px(conf) + "  " + pct(conf), text_color = #2A2E39, text_size = size.small)
+    table.cell(tbl, 3, r, apprOn ? px(appr) + "  (" + str.tostring(apprLen) + " bars)" : "off", text_color = #2A2E39, text_size = size.small)
+
+if barstate.islast and showTbl
+    tbl.clear(0, 0, 3, 3)
+    for [i, h] in array.from("Weekly MA", "Live", "Confirmed", "Chart-bar")
+        table.cell(tbl, i, 0, h, text_color = #2A2E39, text_size = size.small, bgcolor = #FFF3C4)
+    if not lowerTf
+        table.cell(tbl, 0, 1, "Use a chart timeframe below 1W", text_color = #F23645, text_size = size.small)
+        table.merge_cells(tbl, 0, 1, 3, 1)
+    else
+        if showA
+            row(1, str.format("{0} {1}W", typeA, lenA), liveColA, liveValA, prevA, apprValA, apprLenA, apprA)
+        if showB
+            row(2, str.format("{0} {1}W", typeB, lenB), liveColB, liveValB, prevB, apprValB, apprLenB, apprB)
